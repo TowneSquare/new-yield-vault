@@ -1,4 +1,4 @@
-# townSqUSD — ERC4626 Yield Vault
+# townSqVault — ERC4626 Yield Vault
 
 A yield-bearing vault built on ERC4626, with offchain-driven yield distribution, linear
 yield vesting, and a request-then-execute withdrawal flow with a cooldown.
