@@ -165,14 +165,15 @@ sequenceDiagram
 
     User->>Vault: requestRedeem(shares)
     Vault->>Vault: burn shares immediately
-    Vault->>Vault: assets = previewRedeem(shares)  ← LOCKED IN HERE
-    Vault->>Vault: virtualAssets -= assets; totalRequestedAmount += assets
+    Vault->>Vault: assets = previewRedeem(shares)
+    Note over Vault: asset amount is LOCKED IN here
+    Vault->>Vault: virtualAssets decreases, totalRequestedAmount increases
     Note over Vault: cooldownPeriod elapses
     Operator->>Manager: transferToVault(asset, amount)
     Manager->>Vault: assets arrive in the vault
     User->>Vault: withdraw(assets, receiver, owner)
     Vault->>User: safeTransfer(assets)
-    Vault->>Vault: delete request; totalRequestedAmount -= assets
+    Vault->>Vault: delete request, totalRequestedAmount decreases
 ```
 
 Three things to note:
