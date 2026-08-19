@@ -4,6 +4,8 @@ pragma solidity ^0.8.20;
 interface ItownSqUSD {
     // ============ EVENTS ============
     event TransferRewards(address indexed caller, uint256 amount);
+    /// @notice A loss was netted against still-unvested profit before reaching the share price
+    event LossAbsorbedIntoUnvested(uint256 absorbed, uint256 newVestingAmount);
     event ManagerSet(address indexed caller, address indexed manager);
     event FeeSet(address indexed caller, uint256 fee);
     event YieldUpdated(uint256 newExchangeRate, uint256 timestamp);

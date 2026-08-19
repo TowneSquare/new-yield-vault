@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {Test, console2} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockERC20} from "./mock/MockERC20.sol";
-import {townSqToken} from "../src/townSqToken.sol";
+import {TownSqToken} from "../src/TownSqToken.sol";
 import {Manager} from "../src/Manager.sol";
 import {Yield} from "../src/Yield.sol";
 import {townSqProxy} from "../src/Proxy.sol";
@@ -18,7 +18,7 @@ import {townSqProxy} from "../src/Proxy.sol";
  */
 contract RedeemFundingPoC is Test {
     MockERC20 internal asset;
-    townSqToken internal vault;
+    TownSqToken internal vault;
     Manager internal manager;
     Yield internal yield;
 
@@ -46,12 +46,12 @@ contract RedeemFundingPoC is Test {
                 )
             )
         );
-        vault = townSqToken(
+        vault = TownSqToken(
             address(
                 new townSqProxy(
-                    address(new townSqToken()),
+                    address(new TownSqToken()),
                     abi.encodeCall(
-                        townSqToken.initialize,
+                        TownSqToken.initialize,
                         (
                             "TownSquare USD",
                             "townSqUSD",

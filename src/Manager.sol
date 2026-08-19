@@ -81,7 +81,7 @@ contract Manager is Initializable, UUPSUpgradeable, AccessControlUpgradeable, IM
     /**
      * @dev Set contract addresses (admin only)
      * @param _yield New yield address
-     * @param _townSqToken New townSqToken address
+     * @param _townSqToken New TownSqToken address
      */
     function setManagerAndYield(address _yield, address _townSqToken) external onlyRole(ADMIN_ROLE) {
         if (_yield == address(0)) revert Errors.InvalidAddress();
@@ -103,7 +103,7 @@ contract Manager is Initializable, UUPSUpgradeable, AccessControlUpgradeable, IM
     {
         if (_wallets.length != _statuses.length) revert Errors.LengthMismatch();
         for (uint256 i = 0; i < _wallets.length; i++) {
-            // Security: Prevent whitelisting the townSqToken and Yield
+            // Security: Prevent whitelisting the TownSqToken and Yield
             if (_wallets[i] == townSqToken || _wallets[i] == yield) revert Errors.NotWhitelisted();
             whitelistedAddresses[_wallets[i]] = _statuses[i];
             emit WhitelistUpdated(msg.sender, _wallets[i], _statuses[i]);

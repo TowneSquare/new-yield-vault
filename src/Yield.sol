@@ -19,6 +19,10 @@ interface IYield {
     event MinDistributionIntervalSet(address indexed admin, uint256 minDistributionInterval);
     event MaxYieldPercentageSet(address indexed admin, uint256 maxYieldPercentage);
     event MaxFeePercentage(address indexed admin, uint256 MaxFeePercentage);
+    /// @notice Loss the treasury was liable for but could not cover from its share balance
+    event TreasuryDebtAccrued(uint256 amount, uint256 outstanding);
+    /// @notice Treasury debt settled out of a fee entitlement and routed to shareholders
+    event TreasuryDebtRepaid(uint256 amount, uint256 outstanding);
 }
 
 /**
@@ -53,11 +57,18 @@ contract Yield is Initializable, UUPSUpgradeable, AccessControlUpgradeable, IYie
     // Minimum time between distributions
     uint256 public minDistributionInterval;
 
+    /// @notice Loss the treasury was liable for but could not cover with its share balance,
+    /// denominated in the vault's underlying asset. Repaid out of future fee entitlements
+    /// before the treasury is credited anything.
+    /// @dev Appended after `minDistributionInterval` and taken out of `__gap` (50 -> 49) so
+    /// the storage layout of every pre-existing variable is unchanged.
+    uint256 public treasuryDebt;
+
     // ============ STORAGE GAP ============
     /// @dev This empty reserved space is put in place to allow future versions to add new
     /// variables without shifting down storage in the inheritance chain.
     /// See https://docs.openzeppelin.com/contracts/4.x/upgradeable#storage_gaps
-    uint256[50] private __gap;
+    uint256[49] private __gap;
 
     // ============ INITIALIZER ============
     /**
@@ -182,12 +193,24 @@ contract Yield is Initializable, UUPSUpgradeable, AccessControlUpgradeable, IYie
 
         if (isProfit) {
             profit += amount;
-            ItownSqUSD(vaultToken).transferInRewards(amount, true);
 
-            if (feeAmount > 0) {
-                uint256 feeShares = IERC4626(vaultToken).convertToShares(feeAmount);
+            // Outstanding treasury debt is settled before the treasury earns anything new.
+            // The repaid portion is routed to shareholders instead of being minted as fee
+            // shares, which is what makes them whole for the loss the treasury could not
+            // absorb at the time.
+            uint256 repaid = feeAmount < treasuryDebt ? feeAmount : treasuryDebt;
+            if (repaid > 0) {
+                treasuryDebt -= repaid;
+                emit TreasuryDebtRepaid(repaid, treasuryDebt);
+            }
+
+            ItownSqUSD(vaultToken).transferInRewards(amount + repaid, true);
+
+            uint256 netFee = feeAmount - repaid;
+            if (netFee > 0) {
+                uint256 feeShares = IERC4626(vaultToken).convertToShares(netFee);
                 ManageAssetAndShares memory manageAssetAndShares = ManageAssetAndShares({
-                    vaultToken: vaultToken, shares: feeShares, assetAmount: feeAmount, updateAsset: true, isMint: true
+                    vaultToken: vaultToken, shares: feeShares, assetAmount: netFee, updateAsset: true, isMint: true
                 });
                 IManager(manager).manageAssetAndShares(IManager(manager).treasury(), manageAssetAndShares);
             }
@@ -196,11 +219,38 @@ contract Yield is Initializable, UUPSUpgradeable, AccessControlUpgradeable, IYie
             ItownSqUSD(vaultToken).transferInRewards(amount, false);
 
             if (feeAmount > 0) {
+                address treasuryAddress = IManager(manager).treasury();
+
+                // Clamp the clawback to what the treasury actually holds. Treasury shares are
+                // ordinary ERC-20 shares it can transfer or redeem at any time, so burning
+                // `feeAmount` worth unconditionally would revert the whole loss report
+                // whenever the treasury has been swept -- leaving the vault priced above its
+                // real value while redemptions keep settling.
                 uint256 lossShares = IERC4626(vaultToken).convertToShares(feeAmount);
-                ManageAssetAndShares memory manageAssetAndShares = ManageAssetAndShares({
-                    vaultToken: vaultToken, shares: lossShares, assetAmount: feeAmount, updateAsset: true, isMint: false
-                });
-                IManager(manager).manageAssetAndShares(IManager(manager).treasury(), manageAssetAndShares);
+                uint256 available = IERC20(vaultToken).balanceOf(treasuryAddress);
+                if (lossShares > available) lossShares = available;
+
+                uint256 absorbed = IERC4626(vaultToken).convertToAssets(lossShares);
+                if (lossShares > 0) {
+                    ManageAssetAndShares memory manageAssetAndShares = ManageAssetAndShares({
+                        vaultToken: vaultToken,
+                        shares: lossShares,
+                        assetAmount: absorbed,
+                        updateAsset: true,
+                        isMint: false
+                    });
+                    IManager(manager).manageAssetAndShares(treasuryAddress, manageAssetAndShares);
+                }
+
+                uint256 shortfall = feeAmount - absorbed;
+                if (shortfall > 0) {
+                    // The assets are gone regardless, so they are written down now and the
+                    // uncovered portion is booked as a treasury obligation rather than
+                    // silently socialised. Future fees repay it before the treasury is paid.
+                    treasuryDebt += shortfall;
+                    ItownSqUSD(vaultToken).transferInRewards(shortfall, false);
+                    emit TreasuryDebtAccrued(shortfall, treasuryDebt);
+                }
             }
         }
 

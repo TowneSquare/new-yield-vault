@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {Test, console2} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockERC20} from "./mock/MockERC20.sol";
-import {townSqToken} from "../src/townSqToken.sol";
+import {TownSqToken} from "../src/TownSqToken.sol";
 import {Manager} from "../src/Manager.sol";
 import {Yield} from "../src/Yield.sol";
 import {townSqProxy} from "../src/Proxy.sol";
@@ -18,7 +18,7 @@ import {townSqProxy} from "../src/Proxy.sol";
  */
 contract LossHandlingPoC is Test {
     MockERC20 internal asset;
-    townSqToken internal vault;
+    TownSqToken internal vault;
     Manager internal manager;
     Yield internal yield;
 
@@ -47,12 +47,12 @@ contract LossHandlingPoC is Test {
                 )
             )
         );
-        vault = townSqToken(
+        vault = TownSqToken(
             address(
                 new townSqProxy(
-                    address(new townSqToken()),
+                    address(new TownSqToken()),
                     abi.encodeCall(
-                        townSqToken.initialize,
+                        TownSqToken.initialize,
                         (
                             "TownSquare USD",
                             "townSqUSD",
@@ -172,19 +172,84 @@ contract LossHandlingPoC is Test {
         console2.log("Epochs required    :", tenPercentLoss / maxPerEpoch);
     }
 
-    /// @dev If the treasury holds fewer shares than the loss fee requires, the whole
-    ///      distribution reverts -- loss reporting is blocked until the fee is reduced.
-    function test_Loss_RevertsWhenTreasuryHasInsufficientShares() public {
+    /// @dev An empty treasury must NOT block loss reporting. The clawback clamps to zero and
+    ///      the whole loss falls on shareholders instead of reverting.
+    function test_Loss_EmptyTreasury_StillBooksTheFullLoss() public {
         assertEq(vault.balanceOf(treasury), 0, "treasury starts with no shares");
+        uint256 assetsBefore = vault.totalAssets();
 
         skip(1 days);
         vm.prank(rebalancer);
-        vm.expectRevert(); // ERC20InsufficientBalance on the treasury burn
+        yield.distributeYield(5e6, 1e6, 1, false); // no revert
+
+        assertEq(yield.loss(), 5e6, "loss recorded");
+        assertEq(vault.totalAssets(), assetsBefore - 6e6, "amount + feeAmount both written down");
+        assertEq(vault.balanceOf(treasury), 0, "nothing to burn, nothing burned");
+        assertEq(yield.treasuryDebt(), 1e6, "uncovered fee booked as treasury debt");
+    }
+
+    /// @dev Outstanding debt is repaid from the next fee entitlement, and that value is routed
+    ///      to shareholders instead of the treasury until the debt is cleared.
+    function test_TreasuryDebt_RepaidFromFutureFees() public {
+        skip(1 days);
+        vm.prank(rebalancer);
+        yield.distributeYield(5e6, 1e6, 1, false);
+        assertEq(yield.treasuryDebt(), 1e6, "debt accrued");
+
+        // Next profitable epoch: the whole fee goes to repayment, not the treasury.
+        skip(1 days);
+        vm.prank(rebalancer);
+        yield.distributeYield(8e6, 1e6, 2, true);
+
+        assertEq(yield.treasuryDebt(), 0, "debt cleared");
+        assertEq(vault.balanceOf(treasury), 0, "treasury earned nothing while in debt");
+
+        // Once clear, the treasury is paid normally again.
+        skip(1 days);
+        vm.prank(rebalancer);
+        yield.distributeYield(8e6, 1e6, 3, true);
+        assertGt(vault.balanceOf(treasury), 0, "treasury paid once the debt is settled");
+    }
+
+    /// @dev A fee larger than the debt clears it and pays the treasury the remainder.
+    function test_TreasuryDebt_PartialRepaymentPaysTheRest() public {
+        skip(1 days);
+        vm.prank(rebalancer);
         yield.distributeYield(5e6, 1e6, 1, false);
 
-        // Reporting the same loss with a zero fee succeeds.
+        skip(1 days);
         vm.prank(rebalancer);
-        yield.distributeYield(5e6, 0, 1, false);
-        assertEq(yield.loss(), 5e6, "loss booked once the fee is dropped");
+        yield.distributeYield(8e6, 3e6, 2, true); // 1 repays the debt, 2 to the treasury
+
+        assertEq(yield.treasuryDebt(), 0, "debt cleared");
+        assertGt(vault.balanceOf(treasury), 0, "treasury received the excess");
+        console2.log("treasury shares after partial repayment:", vault.balanceOf(treasury));
+    }
+
+    /// @dev When the treasury can only cover part of the fee, it absorbs what it can and the
+    ///      remainder falls to shareholders -- the full loss is still booked.
+    function test_Loss_PartialTreasuryCover_SplitsTheLoss() public {
+        // One profitable epoch leaves the treasury with ~1 USDC of shares.
+        skip(1 days);
+        vm.prank(rebalancer);
+        yield.distributeYield(9e6, 1e6, 1, true);
+        skip(VESTING_PERIOD);
+
+        uint256 treasuryShares = vault.balanceOf(treasury);
+        assertGt(treasuryShares, 0, "treasury has some shares");
+        uint256 assetsBefore = vault.totalAssets();
+
+        // Ask for a 3 USDC clawback against a treasury holding only ~1 USDC.
+        skip(1 days);
+        vm.prank(rebalancer);
+        yield.distributeYield(6e6, 3e6, 2, false);
+
+        assertEq(vault.balanceOf(treasury), 0, "treasury drained to cover what it could");
+        assertEq(vault.totalAssets(), assetsBefore - 9e6, "full amount + fee still written down");
+        assertEq(yield.loss(), 6e6, "loss recorded");
+        assertApproxEqAbs(yield.treasuryDebt(), 2e6, 1e4, "uncovered ~2 USDC booked as debt");
+
+        console2.log("treasury shares before :", treasuryShares);
+        console2.log("treasury shares after  :", vault.balanceOf(treasury));
     }
 }

@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {Test, console2} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockERC20} from "./mock/MockERC20.sol";
-import {townSqToken} from "../src/townSqToken.sol";
+import {TownSqToken} from "../src/TownSqToken.sol";
 import {Manager} from "../src/Manager.sol";
 import {Yield} from "../src/Yield.sol";
 import {townSqProxy} from "../src/Proxy.sol";
@@ -44,7 +44,7 @@ contract MockStrategy {
  */
 contract LifecycleProofOfConcept is Test {
     MockERC20 internal asset;
-    townSqToken internal vault;
+    TownSqToken internal vault;
     Manager internal manager;
     Yield internal yield;
     MockStrategy internal strategy;
@@ -75,7 +75,7 @@ contract LifecycleProofOfConcept is Test {
         asset = new MockERC20("USD Coin", "USDC");
 
         // ---- deploy implementations + UUPS proxies ----
-        townSqToken vaultImpl = new townSqToken();
+        TownSqToken vaultImpl = new TownSqToken();
         Manager managerImpl = new Manager();
         Yield yieldImpl = new Yield();
 
@@ -90,12 +90,12 @@ contract LifecycleProofOfConcept is Test {
             )
         );
 
-        vault = townSqToken(
+        vault = TownSqToken(
             address(
                 new townSqProxy(
                     address(vaultImpl),
                     abi.encodeCall(
-                        townSqToken.initialize,
+                        TownSqToken.initialize,
                         (
                             "TownSquare USD",
                             "townSqUSD",

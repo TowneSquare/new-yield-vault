@@ -5,7 +5,7 @@ import {IERC20} from "openzeppelin-contracts/token/ERC20/IERC20.sol";
 import {Test} from "forge-std/Test.sol";
 import {ItownSqToken, IManager, IYield} from "./mock/interfaces.sol";
 import {console2} from "forge-std/console2.sol";
-import {townSqToken} from "../src/townSqToken.sol";
+import {TownSqToken} from "../src/TownSqToken.sol";
 
 contract forkTest is Test {
     IYield yield = IYield(0xb82b080791dFA4aa6Cac8c3f9c0fcb4471C9FEaD);
@@ -387,7 +387,7 @@ contract forkTest is Test {
         console2.log("Admin Role:", adminRoleBefore);
         console2.log("Default Admin Role:", defaultAdminRoleBefore);
 
-        townSqToken newImplementation = new townSqToken();
+        TownSqToken newImplementation = new TownSqToken();
         console2.log("New implementation deployed at:", address(newImplementation));
 
         // Perform upgrade

@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import "openzeppelin-contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
-import "openzeppelin-contracts-upgradeable/token/ERC20/extensions/ERC4626Upgradeable.sol";
-import "openzeppelin-contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {ERC20Upgradeable} from "openzeppelin-contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import {ERC4626Upgradeable} from "openzeppelin-contracts-upgradeable/token/ERC20/extensions/ERC4626Upgradeable.sol";
+import {AccessControlUpgradeable} from "openzeppelin-contracts-upgradeable/access/AccessControlUpgradeable.sol";
 // OZ v5.7 flags ReentrancyGuard as stateless (ERC-7201 namespaced storage) and no longer
 // transpiles an upgradeable variant — the non-upgradeable version is proxy-safe.
-import "openzeppelin-contracts/utils/ReentrancyGuard.sol";
+import {ReentrancyGuard} from "openzeppelin-contracts/utils/ReentrancyGuard.sol";
 import {PausableUpgradeable} from "openzeppelin-contracts-upgradeable/utils/PausableUpgradeable.sol";
-import "openzeppelin-contracts/utils/math/Math.sol";
-import "openzeppelin-contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import "openzeppelin-contracts/token/ERC20/utils/SafeERC20.sol";
-import "openzeppelin-contracts-upgradeable/proxy/utils/Initializable.sol";
-import "openzeppelin-contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {Math} from"openzeppelin-contracts/utils/math/Math.sol";
+import {IERC20Metadata, IERC20} from "openzeppelin-contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {SafeERC20} from "openzeppelin-contracts/token/ERC20/utils/SafeERC20.sol";
+import {Initializable} from "openzeppelin-contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "openzeppelin-contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {ItownSqUSD} from "./Interface/ItownSqUSD.sol";
 import {IManager} from "./Interface/IManager.sol";
 import {Errors} from "./Errors.sol";
@@ -24,7 +24,7 @@ import {Errors} from "./Errors.sol";
  * and yield distribution features. Users can deposit assets, earn yield, and withdraw with a
  * cooldown period to ensure orderly asset management.
  */
-contract townSqToken is
+contract TownSqToken is
     Initializable,
     UUPSUpgradeable,
     ERC4626Upgradeable,
@@ -136,6 +136,18 @@ contract townSqToken is
         // Burn shares immediately when redemption is requested
         _burn(msg.sender, shares);
 
+        // Re-mint the exit fee to the treasury rather than letting it accrue implicitly to
+        // the remaining holders. Burning `shares` while only removing `assets` (which is net
+        // of the fee) would otherwise raise the share price for everyone who stays; minting
+        // `feeShares` back keeps the share price exactly neutral and turns the fee into a
+        // treasury claim instead.
+        uint256 feeShares = (shares * fee) / HUNDRED_PERCENT;
+        if (feeShares > 0) {
+            address treasuryAddress = IManager(manager).treasury();
+            if (treasuryAddress == address(0)) revert Errors.InvalidAddress();
+            _mint(treasuryAddress, feeShares);
+        }
+
         // Update virtual assets to reflect the burned shares
         _updateTotalAssets(assets, false);
         totalRequestedAmount += assets;
@@ -228,26 +240,9 @@ contract townSqToken is
         return ((vestingPeriod - timeSinceLastDistribution) * vestingAmount) / vestingPeriod;
     }
 
-    /**
-     * @dev Preview shares for deposit (includes fee calculation)
-     * @param assets Amount of assets to deposit
-     * @return Shares that would be minted
-     */
-    function previewDeposit(uint256 assets) public view override returns (uint256) {
-        uint256 sharesBeforeFee = super.previewDeposit(assets);
-        uint256 feeShares = (sharesBeforeFee * fee) / HUNDRED_PERCENT;
-        return sharesBeforeFee - feeShares;
-    }
-
-    /**
-     * @dev Preview assets for mint (includes fee calculation)
-     * @param shares Amount of shares to mint
-     * @return Assets that would be required
-     */
-    function previewMint(uint256 shares) public view override returns (uint256) {
-        uint256 grossShares = (shares * HUNDRED_PERCENT) / (HUNDRED_PERCENT - fee);
-        return super.previewMint(grossShares);
-    }
+    // NOTE: `previewDeposit` and `previewMint` are intentionally NOT overridden. `fee` is an
+    // exit-only fee, charged on redemption, so entering the vault is free of charge and the
+    // standard ERC-4626 behaviour applies on the way in.
 
     /**
      * @dev Preview shares for withdrawal (includes fee calculation)
@@ -256,8 +251,9 @@ contract townSqToken is
      */
     function previewWithdraw(uint256 assets) public view override returns (uint256) {
         uint256 sharesWithoutFee = super.previewWithdraw(assets);
-        uint256 totalShares = (sharesWithoutFee * HUNDRED_PERCENT) / (HUNDRED_PERCENT - fee);
-        return totalShares;
+        // Round the gross-up UP: ERC-4626 requires previewWithdraw to favour the vault, and
+        // plain integer division would truncate the fee, under-charging shares by 1 wei.
+        return sharesWithoutFee.mulDiv(HUNDRED_PERCENT, HUNDRED_PERCENT - fee, Math.Rounding.Ceil);
     }
 
     /**
@@ -336,6 +332,7 @@ contract townSqToken is
         if (amount == 0) revert Errors.ZeroAmount();
 
         if (!profit) {
+            _absorbLossIntoUnvested(amount);
             _updateTotalAssets(amount, false);
             return;
         }
@@ -463,6 +460,39 @@ contract townSqToken is
      * @dev Update vesting amount for new yield distribution
      * @param newVestingAmount New amount to vest
      */
+    /**
+     * @notice Cancel unvested profit before a loss is allowed to reach the share price
+     * @dev Profit that has not vested yet has been credited to nobody, so destroying it costs
+     * no holder anything. Netting the loss here first means `totalAssets()` is unchanged when
+     * the loss fits inside the unvested buffer:
+     *
+     *     totalAssets = (virtualAssets - amount) - (unvested - absorbed) = virtualAssets - unvested
+     *
+     * Without this, the vault keeps withholding profit whose backing assets no longer exist and
+     * under-reports itself for the rest of the schedule -- and because `requestRedeem` freezes
+     * a quote at request time, anyone exiting during that window is permanently underpaid.
+     *
+     * `lastDistributionTimestamp` is deliberately left untouched: rescaling `vestingAmount`
+     * against the elapsed fraction keeps the surviving profit on its ORIGINAL vesting end date
+     * rather than restarting the clock, which would extend the under-reporting it exists to fix.
+     *
+     * @param amount The loss being booked, in underlying assets
+     */
+    function _absorbLossIntoUnvested(uint256 amount) internal {
+        uint256 unvested = getUnvestedAmount();
+        if (unvested == 0) return;
+
+        uint256 absorbed = amount < unvested ? amount : unvested;
+        uint256 remaining = unvested - absorbed;
+
+        // `unvested > 0` guarantees vestingPeriod > 0 and elapsed < vestingPeriod, so the
+        // denominator is non-zero. The result is bounded above by the current vestingAmount.
+        uint256 elapsed = block.timestamp - lastDistributionTimestamp;
+        vestingAmount = remaining.mulDiv(vestingPeriod, vestingPeriod - elapsed, Math.Rounding.Ceil);
+
+        emit LossAbsorbedIntoUnvested(absorbed, vestingAmount);
+    }
+
     function _updateVestingAmount(uint256 newVestingAmount) internal virtual {
         vestingAmount = newVestingAmount + getUnvestedAmount();
         _updateTotalAssets(newVestingAmount, true);
@@ -496,15 +526,7 @@ contract townSqToken is
         if (receiver == address(0) || assets == 0 || shares == 0) revert Errors.InvalidDeposit();
         if (shares < IManager(manager).minSharesInVaultToken(address(this))) revert Errors.InvalidMinShares();
 
-        uint256 totalShares = super.previewDeposit(assets);
-        uint256 feeShare = totalShares - shares;
-
-        // Get treasury address from manager
-        if (feeShare > 0) {
-            address treasuryAddress = IManager(manager).treasury();
-            _mint(treasuryAddress, feeShare);
-        }
-
+        // No fee is charged on entry -- `fee` applies only on redemption.
         _mint(receiver, shares);
 
         _updateTotalAssets(assets, true);

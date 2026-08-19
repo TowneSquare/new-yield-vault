@@ -5,7 +5,7 @@ import {Test, console2} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {MockERC20} from "./mock/MockERC20.sol";
-import {townSqToken} from "../src/townSqToken.sol";
+import {TownSqToken} from "../src/TownSqToken.sol";
 import {Manager} from "../src/Manager.sol";
 import {Yield} from "../src/Yield.sol";
 import {townSqProxy} from "../src/Proxy.sol";
@@ -13,7 +13,7 @@ import {IManager, ManageAssetAndShares} from "../src/Interface/IManager.sol";
 
 contract IntegrationTest is Test {
     MockERC20 public asset;
-    townSqToken public vault;
+    TownSqToken public vault;
     Manager public manager;
     Yield public yield;
 
@@ -49,7 +49,7 @@ contract IntegrationTest is Test {
         asset = new MockERC20("USDC", "USDC");
 
         // Deploy implementation contracts
-        townSqToken townSqTokenImpl = new townSqToken();
+        TownSqToken townSqTokenImpl = new TownSqToken();
         Manager managerImpl = new Manager();
         Yield yieldImpl = new Yield();
 
@@ -74,9 +74,9 @@ contract IntegrationTest is Test {
         townSqProxy managerProxy = new townSqProxy(address(managerImpl), managerInitData);
         manager = Manager(address(managerProxy));
 
-        // Deploy townSqToken proxy using UUPS pattern
+        // Deploy TownSqToken proxy using UUPS pattern
         bytes memory townSqTokenInitData = abi.encodeWithSelector(
-            townSqToken.initialize.selector,
+            TownSqToken.initialize.selector,
             "Artificial Financial Intelligence USD",
             "townSqUSD",
             IERC20(asset), // asset
@@ -87,7 +87,7 @@ contract IntegrationTest is Test {
         );
 
         townSqProxy vaultProxy = new townSqProxy(address(townSqTokenImpl), townSqTokenInitData);
-        vault = townSqToken(address(vaultProxy));
+        vault = TownSqToken(address(vaultProxy));
 
         vm.stopPrank();
 

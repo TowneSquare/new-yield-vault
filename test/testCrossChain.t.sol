@@ -5,14 +5,14 @@ import {IERC20} from "openzeppelin-contracts/token/ERC20/IERC20.sol";
 import {Test} from "forge-std/Test.sol";
 import {ItownSqToken, IManager, IYield} from "./mock/interfaces.sol";
 import {console2} from "forge-std/console2.sol";
-import {townSqToken} from "../src/townSqToken.sol";
+import {TownSqToken} from "../src/TownSqToken.sol";
 import {Manager} from "../src/Manager.sol";
 import {Yield} from "../src/Yield.sol";
 import {townSqProxy} from "../src/Proxy.sol";
 import {Create2} from "openzeppelin-contracts/utils/Create2.sol";
 
 contract forkTestDeployment is Test {
-    townSqToken public townSqUSD;
+    TownSqToken public townSqUSD;
     Manager public manager;
     Yield public yield;
 
@@ -42,13 +42,12 @@ contract forkTestDeployment is Test {
         }
     }
 
-
     function testDeploymentMonad() public {
         // No known-good pinned block for this chain — set MONAD_FORK_BLOCK to make it
         // reproducible; defaults to chain head.
         _fork("monad", vm.envOr("MONAD_FORK_BLOCK", uint256(0)));
         vm.startPrank(create2Deployer);
-        townSqUSD = new townSqToken();
+        townSqUSD = new TownSqToken();
         manager = new Manager();
         yield = new Yield();
 

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.19;
 
 import {Test, console2} from "forge-std/Test.sol";
-import {townSqToken} from "../src/townSqToken.sol";
+import {TownSqToken} from "../src/TownSqToken.sol";
 import {Manager} from "../src/Manager.sol";
 import {Yield} from "../src/Yield.sol";
 import {townSqProxy} from "../src/Proxy.sol";
@@ -47,7 +47,7 @@ contract CrossChainYieldTest is Test {
         // Deploy and setup ETH vault
         Manager mETHImpl = new Manager();
         Yield yETHImpl = new Yield();
-        townSqToken vETHImpl = new townSqToken();
+        TownSqToken vETHImpl = new TownSqToken();
 
         // Initialize atomically in the proxy constructor. ERC1967Proxy rejects empty
         // `_data`, so deploy in dependency order: Yield, then Manager, then the vault.
@@ -59,12 +59,12 @@ contract CrossChainYieldTest is Test {
                 new townSqProxy(address(mETHImpl), abi.encodeCall(Manager.initialize, (admin, address(yETH), operator)))
             )
         );
-        townSqToken vETH = townSqToken(
+        TownSqToken vETH = TownSqToken(
             address(
                 new townSqProxy(
                     address(vETHImpl),
                     abi.encodeCall(
-                        townSqToken.initialize,
+                        TownSqToken.initialize,
                         (
                             "townSqUSD ETH",
                             "townSqUSD-ETH",
@@ -89,7 +89,7 @@ contract CrossChainYieldTest is Test {
         // Deploy and setup KATANA vault
         Manager mKATANAImpl = new Manager();
         Yield yKATANAImpl = new Yield();
-        townSqToken vKATANAImpl = new townSqToken();
+        TownSqToken vKATANAImpl = new TownSqToken();
 
         // Same dependency-ordered, atomically-initialized deployment as the ETH side.
         Yield yKATANA = Yield(
@@ -102,12 +102,12 @@ contract CrossChainYieldTest is Test {
                 )
             )
         );
-        townSqToken vKATANA = townSqToken(
+        TownSqToken vKATANA = TownSqToken(
             address(
                 new townSqProxy(
                     address(vKATANAImpl),
                     abi.encodeCall(
-                        townSqToken.initialize,
+                        TownSqToken.initialize,
                         (
                             "townSqUSD KATANA",
                             "townSqUSD-KATANA",

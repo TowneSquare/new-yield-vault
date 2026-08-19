@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {Test, console2} from "forge-std/Test.sol";
 import {IERC20} from "openzeppelin-contracts/token/ERC20/IERC20.sol";
 import {MockERC20} from "./mock/MockERC20.sol";
-import {townSqToken} from "../src/townSqToken.sol";
+import {TownSqToken} from "../src/TownSqToken.sol";
 import {Manager} from "../src/Manager.sol";
 import {Yield} from "../src/Yield.sol";
 import {townSqProxy} from "../src/Proxy.sol";
@@ -12,7 +12,7 @@ import {IManager, ManageAssetAndShares} from "../src/Interface/IManager.sol";
 
 contract UpgradeTest is Test {
     MockERC20 public asset;
-    townSqToken public vault;
+    TownSqToken public vault;
     Manager public manager;
     Yield public yield;
 
@@ -37,7 +37,7 @@ contract UpgradeTest is Test {
         asset = new MockERC20("USDC", "USDC");
 
         // Deploy implementation contracts
-        townSqToken townSqTokenImpl = new townSqToken();
+        TownSqToken townSqTokenImpl = new TownSqToken();
         Manager managerImpl = new Manager();
         Yield yieldImpl = new Yield();
 
@@ -63,7 +63,7 @@ contract UpgradeTest is Test {
         manager = Manager(address(managerProxy));
 
         bytes memory townSqTokenInitData = abi.encodeWithSelector(
-            townSqToken.initialize.selector,
+            TownSqToken.initialize.selector,
             "Artificial Financial Intelligence USD",
             "townSqUSD",
             IERC20(asset), // asset
@@ -74,7 +74,7 @@ contract UpgradeTest is Test {
         );
 
         townSqProxy vaultProxy = new townSqProxy(address(townSqTokenImpl), townSqTokenInitData);
-        vault = townSqToken(address(vaultProxy));
+        vault = TownSqToken(address(vaultProxy));
 
         vm.stopPrank();
 
@@ -115,7 +115,7 @@ contract UpgradeTest is Test {
         uint256 initialTotalAssets = vault.totalAssets();
 
         // Deploy new implementation
-        townSqToken newTownSqTokenImpl = new townSqToken();
+        TownSqToken newTownSqTokenImpl = new TownSqToken();
 
         vm.startPrank(admin);
         vault.upgradeToAndCall(address(newTownSqTokenImpl), "");
@@ -180,7 +180,7 @@ contract UpgradeTest is Test {
         uint256 initialBalance = vault.balanceOf(user1);
         uint256 initialTotalAssets = vault.totalAssets();
 
-        townSqToken newTownSqTokenImpl = new townSqToken();
+        TownSqToken newTownSqTokenImpl = new TownSqToken();
         Manager newManagerImpl = new Manager();
         Yield newYieldImpl = new Yield();
 
@@ -200,7 +200,7 @@ contract UpgradeTest is Test {
     }
 
     function test_Upgrade_Security_OnlyAdmin() public {
-        townSqToken newTownSqUSDImpl = new townSqToken();
+        TownSqToken newTownSqUSDImpl = new TownSqToken();
         vm.startPrank(user1);
         vm.expectRevert();
         vault.upgradeToAndCall(address(newTownSqUSDImpl), "");
@@ -230,7 +230,7 @@ contract UpgradeTest is Test {
         (uint256 shares, uint256 assets, uint256 timestamp, bool exists) = vault.getRedeemRequest(user1);
 
         // Deploy new implementation
-        townSqToken newTownSqUSDImpl = new townSqToken();
+        TownSqToken newTownSqUSDImpl = new TownSqToken();
 
         vm.startPrank(admin);
         vault.upgradeToAndCall(address(newTownSqUSDImpl), "");
@@ -255,7 +255,7 @@ contract UpgradeTest is Test {
         vm.stopPrank();
 
         // Deploy new implementation (could have new features)
-        townSqToken newTownSqUSDImpl = new townSqToken();
+        TownSqToken newTownSqUSDImpl = new TownSqToken();
 
         vm.startPrank(user1);
         vm.expectRevert();

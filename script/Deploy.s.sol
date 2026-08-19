@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import {IERC20} from "openzeppelin-contracts/token/ERC20/IERC20.sol";
 import {townSqProxy} from "../src/Proxy.sol";
-import {townSqToken} from "../src/townSqToken.sol";
+import {TownSqToken} from "../src/TownSqToken.sol";
 import {Manager} from "../src/Manager.sol";
 import {Yield} from "../src/Yield.sol";
 
@@ -19,8 +19,8 @@ contract DeployScript is Script {
         address treasury = vm.envAddress("TREASURY_ADDRESS");
         uint256 maxRedeemCap = vm.envUint("MAX_REDEEM_CAP");
         uint256 minShares = vm.envUint("MIN_SHARES");
-        uint256 vestingPeriod = 0;
-        uint256 cooldownPeriod = 0;
+        uint256 vestingPeriod = 604800;
+        uint256 cooldownPeriod = 86400;
 
         console.log("Deploying to Testnet...");
         console.log("Deployer address:", deployerPrivateKey);
@@ -31,11 +31,11 @@ contract DeployScript is Script {
 
         // Deploy implementation contracts
         console.log("Deploying implementation contracts...");
-        townSqToken townSqTokenImpl = new townSqToken();
+        TownSqToken townSqTokenImpl = new TownSqToken();
         Manager managerImpl = new Manager();
         Yield yieldImpl = new Yield();
 
-        console.log("townSqToken Implementation deployed at:", address(townSqTokenImpl));
+        console.log("TownSqToken Implementation deployed at:", address(townSqTokenImpl));
         console.log("Manager Implementation deployed at:", address(managerImpl));
         console.log("Yield Implementation deployed at:", address(yieldImpl));
 
@@ -68,20 +68,20 @@ contract DeployScript is Script {
         console.log("Max redeem cap:", maxRedeemCap);
         console.log("Min shares:", minShares);
 
-        // 3. Deploy townSqToken with asset, admin, and manager
+        // 3. Deploy TownSqToken with asset, admin, and manager
         bytes memory townSqTokenInitData = abi.encodeWithSelector(
-            townSqToken.initialize.selector,
-             "trwaUSD",
-            "trwaUSD",
+            TownSqToken.initialize.selector,
+            "trwaUSDi",
+            "trwaUSDi",
             IERC20(assetAddress), // asset
             admin, // admin
             address(managerProxy),
-            vestingPeriod,
-            cooldownPeriod // manager
+            cooldownPeriod,
+            vestingPeriod
         );
 
         townSqProxy townSqTokenProxy = new townSqProxy(address(townSqTokenImpl), townSqTokenInitData);
-        console.log("townSqToken Proxy deployed at:", address(townSqTokenProxy));
+        console.log("TownSqToken Proxy deployed at:", address(townSqTokenProxy));
 
         // Set up cross-references
         console.log("Setting up cross-references...");
@@ -89,7 +89,7 @@ contract DeployScript is Script {
         // Set manager in Yield
         Yield(address(yieldProxy)).setManager(address(managerProxy));
 
-        // Configure Manager: set treasury, townSqToken, yield, and vault parameters
+        // Configure Manager: set treasury, TownSqToken, yield, and vault parameters
         Manager(address(managerProxy)).setTreasury(treasury);
         Manager(address(managerProxy)).setManagerAndYield(address(yieldProxy), address(townSqTokenProxy));
         Manager(address(managerProxy)).setMinSharesInVaultToken(address(townSqTokenProxy), minShares);
@@ -113,8 +113,8 @@ contract DeployScript is Script {
         console.log("\n=== DEPLOYMENT COMPLETED SUCCESSFULLY ===");
         console.log("Deployer:", deployer);
         console.log("\nContract Addresses:");
-        console.log("townSqToken Implementation:", address(townSqTokenImpl));
-        console.log("townSqToken Proxy:", address(townSqTokenProxy));
+        console.log("TownSqToken Implementation:", address(townSqTokenImpl));
+        console.log("TownSqToken Proxy:", address(townSqTokenProxy));
         console.log("Manager Implementation:", address(managerImpl));
         console.log("Manager Proxy:", address(managerProxy));
         console.log("Yield Implementation:", address(yieldImpl));
@@ -125,7 +125,7 @@ contract DeployScript is Script {
         console.log("Min Shares:", minShares);
         console.log("\n=== VERIFICATION COMMANDS ===");
         console.log("To verify contracts on block explorer, use:");
-        console.log("forge verify-contract", address(townSqTokenImpl), "src/townSqToken.sol:townSqToken");
+        console.log("forge verify-contract", address(townSqTokenImpl), "src/TownSqToken.sol:TownSqToken");
         console.log("forge verify-contract", address(managerImpl), "src/Manager.sol:Manager");
         console.log("forge verify-contract", address(yieldImpl), "src/Yield.sol:Yield");
     }
