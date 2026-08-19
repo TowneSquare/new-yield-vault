@@ -22,6 +22,10 @@ interface ItownSqUSD {
     // ============ FUNCTIONS ============
     function transferInRewards(uint256 amount, bool profit) external;
     function exchangeRate() external view returns (uint256);
+    /// @notice Total assets including profit that has not vested yet
+    function virtualAssets() external view returns (uint256);
+    /// @notice Portion of `virtualAssets` still withheld by the vesting schedule
+    function getUnvestedAmount() external view returns (uint256);
     function mintVaultToken(address to, uint256 amount) external;
     function burnVaultToken(address from, uint256 amount) external;
     function updateTotalAssets(uint256 amount, bool add) external;
