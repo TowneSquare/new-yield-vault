@@ -26,6 +26,13 @@ interface ItownSqUSD {
     function virtualAssets() external view returns (uint256);
     /// @notice Portion of `virtualAssets` still withheld by the vesting schedule
     function getUnvestedAmount() external view returns (uint256);
+    /// @notice Split a profit fee into its immediately recognisable part, its vesting part,
+    /// and the shares owed for it. Read live — call after the profit is on the vesting
+    /// schedule and before any fee asset or share is applied.
+    function previewProfitFee(uint256 feeAssets)
+        external
+        view
+        returns (uint256 feeShares, uint256 recognisedFee, uint256 vestingFee);
     function mintVaultToken(address to, uint256 amount) external;
     function burnVaultToken(address from, uint256 amount) external;
     function updateTotalAssets(uint256 amount, bool add) external;

@@ -96,7 +96,10 @@ contract FeeSharePricingPoC is Test {
         vm.prank(rebalancer);
         yield.distributeYield(amount, feeAmount, 1, true);
 
-        assertEq(vault.getUnvestedAmount(), amount, "profit fully unvested at mint time");
+        // The profit is fully unvested, plus the slice of the fee that could not be recognised
+        // immediately without stepping the share price -- that slice rides the same schedule.
+        assertGe(vault.getUnvestedAmount(), amount, "profit fully unvested at mint time");
+        assertLt(vault.getUnvestedAmount(), amount + feeAmount, "only part of the fee vests");
 
         uint256 atMint = vault.convertToAssets(vault.balanceOf(treasury));
         assertLt(atMint, feeAmount, "treasury starts below its fee -- it has not vested yet");
@@ -184,6 +187,61 @@ contract FeeSharePricingPoC is Test {
 
         console2.log("treasury gained:", gained);
         assertApproxEqAbs(gained, 100e6, 1e3, "fee exact despite a prior schedule in flight");
+    }
+
+    /// @dev REGRESSION: the recognised share price must never step UP across a profit epoch.
+    ///      Crediting the whole fee to `totalAssets()` while pricing the fee shares against the
+    ///      fully vested base did exactly that, giving searchers a discontinuity to sit in front
+    ///      of. Splitting the fee into a recognisable part and a vesting part removes the step.
+    function test_FeeShares_NoUpwardPriceStepAtDistribution() public {
+        uint256 unit = 10 ** vault.decimals();
+
+        skip(1 days);
+        uint256 ppsBefore = vault.convertToAssets(unit);
+
+        vm.prank(rebalancer);
+        yield.distributeYield(400e6, 100e6, 1, true);
+
+        uint256 ppsAfter = vault.convertToAssets(unit);
+        console2.log("pps before:", ppsBefore);
+        console2.log("pps after :", ppsAfter);
+
+        // No step up. A step down of at most rounding dust is allowed by the floor in
+        // `previewProfitFee`, which is what buys the no-upward-step guarantee.
+        assertLe(ppsAfter, ppsBefore, "share price must not jump up at distribution");
+        assertGe(ppsAfter + 2, ppsBefore, "and must not drop by more than rounding dust");
+    }
+
+    /// @dev The same property with a prior schedule still in flight -- the case where the gap
+    ///      between the recognised and the fully vested base, and so the step, was largest.
+    function test_FeeShares_NoUpwardPriceStepWithPriorEpochVesting() public {
+        uint256 unit = 10 ** vault.decimals();
+
+        skip(1 days);
+        vm.prank(rebalancer);
+        yield.distributeYield(300e6, 0, 1, true);
+        skip(VESTING_PERIOD / 2);
+        assertGt(vault.getUnvestedAmount(), 0, "epoch 1 is still vesting");
+
+        uint256 ppsBefore = vault.convertToAssets(unit);
+        vm.prank(rebalancer);
+        yield.distributeYield(400e6, 100e6, 2, true);
+
+        assertLe(vault.convertToAssets(unit), ppsBefore, "share price must not jump up");
+        assertGe(vault.convertToAssets(unit) + 2, ppsBefore, "and must not drop materially");
+    }
+
+    /// @dev And the treasury is still paid in full -- the split changes the schedule the fee
+    ///      arrives on, never its size.
+    function test_FeeShares_SplitStillPaysTheFullFee() public {
+        skip(1 days);
+        vm.prank(rebalancer);
+        yield.distributeYield(400e6, 100e6, 1, true);
+        skip(VESTING_PERIOD);
+
+        assertApproxEqAbs(
+            vault.convertToAssets(vault.balanceOf(treasury)), 100e6, 2, "treasury lands exactly on its fee"
+        );
     }
 
     /// @dev With no fee there is nothing to mispriced, so holders receive the full profit.

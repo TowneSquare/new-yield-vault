@@ -208,24 +208,36 @@ contract LifecycleProofOfConcept is Test {
         yield.distributeYield(NET_YIELD, FEE_AMOUNT, 1, true);
 
         assertEq(yield.epoch(), 1, "epoch advanced");
-        assertEq(vault.vestingAmount(), NET_YIELD, "the users' share is locked in the vesting schedule");
+        // The users' share, plus whatever part of the fee could not be recognised immediately
+        // without stepping the share price -- the treasury vests on the same schedule.
+        assertGe(vault.vestingAmount(), NET_YIELD, "the users' share is locked in the vesting schedule");
+        assertLt(vault.vestingAmount(), NET_YIELD + FEE_AMOUNT, "only part of the fee vests");
         assertGt(vault.balanceOf(treasury), 0, "treasury was minted fee shares");
 
         // This is the anti-front-running property: the users' yield is NOT immediately
-        // claimable. Only the fee lands instantly, because it is booked as shares, not vested.
+        // claimable. Only the part of the fee matching what the treasury's new shares are
+        // already worth lands instantly -- crediting the whole fee would step the share price
+        // up at this instant, which is precisely the discontinuity searchers look for.
+        uint256 recognisedFee = vault.totalAssets() - assetsBeforeDistribution;
+        assertLe(recognisedFee, FEE_AMOUNT, "t=0: at most the fee is recognised");
         assertEq(
-            vault.totalAssets(), assetsBeforeDistribution + FEE_AMOUNT, "t=0: the 4 USDC to users is entirely unvested"
+            vault.getUnvestedAmount(),
+            NET_YIELD + (FEE_AMOUNT - recognisedFee),
+            "the users' yield plus the unrecognised fee remainder is still locked"
         );
-        assertEq(vault.getUnvestedAmount(), NET_YIELD, "nothing has vested yet");
         _log("PHASE 4 - yield pushed", vault.vestingAmount(), vault.totalAssets(), vault.exchangeRate());
 
         // Halfway through the vesting period, half the users' share has been recognised.
+        uint256 vesting = vault.vestingAmount();
         skip(VESTING_PERIOD / 2);
-        assertEq(vault.getUnvestedAmount(), NET_YIELD / 2, "half vested");
-        assertEq(
+        // Tolerance of 1: the schedule is no longer a round number now that the unrecognised
+        // fee remainder shares it, so the halfway split can truncate by a wei.
+        assertApproxEqAbs(vault.getUnvestedAmount(), vesting / 2, 1, "half vested");
+        assertApproxEqAbs(
             vault.totalAssets(),
-            assetsBeforeDistribution + FEE_AMOUNT + NET_YIELD / 2,
-            "half the yield is now recognised"
+            assetsBeforeDistribution + recognisedFee + vesting / 2,
+            1,
+            "half the schedule is now recognised"
         );
         _log("PHASE 4 - half vested", vault.getUnvestedAmount(), vault.totalAssets(), vault.exchangeRate());
 

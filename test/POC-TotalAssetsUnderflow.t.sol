@@ -150,11 +150,13 @@ contract TotalAssetsUnderflowPoC is Test {
     }
 
     /// @dev The only way to subtract MORE than the gap in one distribution is the loss-fee
-    ///      path, which subtracts `amount + feeAmount`. But `feeAmount` must exceed the
-    ///      post-`amount` gap to underflow, and burning that many treasury shares requires
-    ///      the treasury to hold more shares than the entire supply — impossible, since the
-    ///      treasury's balance is part of `totalSupply`. The distribution reverts instead.
-    function test_Underflow_FeeBurnRequiresMoreSharesThanExist() public {
+    ///      path, which subtracts `amount + feeAmount`. This used to revert, because burning
+    ///      that much from the treasury required more shares than exist. It no longer does:
+    ///      the burn is now CLAMPED to the treasury's actual balance and the uncovered
+    ///      remainder is booked as `treasuryDebt`, so a loss report can always be recorded
+    ///      even when the treasury cannot absorb its share. The invariant that matters is
+    ///      unchanged and is what this now asserts — the gap is never crossed.
+    function test_Underflow_FeeBurnClampsInsteadOfReverting() public {
         _seedVestingAndTreasury(500e6, 100e6);
 
         // Admin opens the caps as wide as they go.
@@ -175,12 +177,22 @@ contract TotalAssetsUnderflowPoC is Test {
         console2.log("treasury shares    :", vault.balanceOf(treasury));
         console2.log("total supply       :", vault.totalSupply());
 
-        // The burn requirement is what stops it, before any underflow can be reached.
+        uint256 treasurySharesBefore = vault.balanceOf(treasury);
+        uint256 debtBefore = yield.treasuryDebt();
+
+        // Records successfully rather than reverting: the burn clamps, the rest becomes debt.
         vm.prank(rebalancer);
-        vm.expectRevert();
         yield.distributeYield(amount, feeAmount, 2, false);
 
+        // The invariant this file exists to defend still holds.
         _assertNoUnderflow();
+
+        // And the clamp behaved as designed: the treasury gave up everything it had, and the
+        // part it could not cover was booked as an obligation instead of silently socialised.
+        assertEq(vault.balanceOf(treasury), 0, "treasury shares fully consumed by the clamp");
+        assertGt(yield.treasuryDebt(), debtBefore, "the uncovered remainder is booked as debt");
+        console2.log("treasury shares burned :", treasurySharesBefore);
+        console2.log("treasuryDebt accrued   :", yield.treasuryDebt() - debtBefore);
     }
 
     /// @dev `requestRedeem` also subtracts from `virtualAssets`, but the amount comes from

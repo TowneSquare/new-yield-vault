@@ -240,6 +240,54 @@ contract TownSqToken is
         return ((vestingPeriod - timeSinceLastDistribution) * vestingAmount) / vestingPeriod;
     }
 
+    /**
+     * @dev Split a profit fee into the part that can be recognised immediately and the part
+     * that must vest, alongside the shares the treasury is owed for it
+     *
+     * @notice Must be called AFTER the shareholders' profit has been added to the vesting
+     * schedule and BEFORE any fee assets or fee shares are applied — both bases are read
+     * live, so either leg landing first corrupts the split.
+     *
+     * The shares are priced against the fully vested base (`virtualAssets`) so they are worth
+     * exactly `feeAssets` once the schedule completes. `recognisedFee` is then what those
+     * shares are worth against the *recognised* base right now, floored — which is precisely
+     * the amount of fee that can enter `totalAssets()` immediately without the mint pushing
+     * the share price up. The remainder rides the vesting schedule with everyone else's yield,
+     * so the recognised share price stays continuous across the epoch instead of stepping.
+     *
+     * @param feeAssets The treasury's slice of this epoch's profit
+     * @return feeShares Shares to mint to the treasury, rounded up in the protocol's favour
+     * @return recognisedFee Fee assets to credit to `totalAssets()` immediately
+     * @return vestingFee Fee assets to add to the vesting schedule
+     */
+    function previewProfitFee(uint256 feeAssets)
+        external
+        view
+        returns (uint256 feeShares, uint256 recognisedFee, uint256 vestingFee)
+    {
+        // A zero base would price a share at the virtual-share floor and mint an absurd
+        // amount for a dust fee. Callers are incidentally protected by their own yield caps;
+        // this makes the guard explicit rather than relying on that.
+        if (totalSupply() == 0 || virtualAssets == 0) return (0, 0, 0);
+
+        // Match OpenZeppelin's ERC-4626 effective supply so the virtual-share inflation
+        // protection is inherited rather than re-derived.
+        uint256 effectiveSupply = totalSupply() + 10 ** _decimalsOffset();
+
+        // Round up because fee calculations should favour the protocol.
+        feeShares = Math.mulDiv(feeAssets, effectiveSupply, virtualAssets + 1, Math.Rounding.Ceil);
+
+        // Rounding down is what guarantees no upward share-price jump: it makes
+        // `recognisedFee * effectiveSupply <= (totalAssets() + 1) * feeShares` hold exactly.
+        recognisedFee = Math.mulDiv(feeShares, totalAssets() + 1, effectiveSupply, Math.Rounding.Floor);
+
+        // Very small fees: one indivisible share can be worth more than the fee requested.
+        // Clamping still satisfies the inequality above, strictly.
+        if (recognisedFee > feeAssets) recognisedFee = feeAssets;
+
+        vestingFee = feeAssets - recognisedFee;
+    }
+
     // NOTE: `previewDeposit` and `previewMint` are intentionally NOT overridden. `fee` is an
     // exit-only fee, charged on redemption, so entering the vault is free of charge and the
     // standard ERC-4626 behaviour applies on the way in.

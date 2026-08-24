@@ -4,7 +4,6 @@ pragma solidity ^0.8.20;
 import {IERC20} from "openzeppelin-contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "openzeppelin-contracts/interfaces/IERC4626.sol";
 import {SafeERC20} from "openzeppelin-contracts/token/ERC20/utils/SafeERC20.sol";
-import {Math} from "openzeppelin-contracts/utils/math/Math.sol";
 import "openzeppelin-contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "openzeppelin-contracts-upgradeable/proxy/utils/Initializable.sol";
 import "openzeppelin-contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -209,27 +208,33 @@ contract Yield is Initializable, UUPSUpgradeable, AccessControlUpgradeable, IYie
 
             uint256 netFee = feeAmount - repaid;
             if (netFee > 0) {
-                // Price the fee against the FULLY VESTED asset base, not the recognised one.
+                // The fee shares are priced against the FULLY VESTED base so they are worth
+                // exactly `netFee` when the schedule completes — pricing them against the
+                // recognised base would hand the treasury extra shares that then capture part
+                // of the holders' profit as it vests.
                 //
-                // `transferInRewards` above added the profit to the vesting schedule, so
-                // `totalAssets()` still excludes it. Pricing at that stale, lower value would
-                // hand the treasury more shares than `netFee` is worth, and those extra shares
-                // would then capture part of the holders' profit as it vests. Rescaling onto
-                // `virtualAssets` (== totalAssets + unvested) makes the fee shares worth
-                // exactly `netFee` once the schedule completes.
+                // But crediting all of `netFee` to `totalAssets()` immediately while pricing the
+                // shares on vested terms steps the recognised share price UP at this instant:
+                // fast assets against slow shares. So the fee is split — `recognisedFee` is the
+                // most that can be credited now without the mint moving the price, and the rest
+                // rides the same vesting schedule as the shareholders' profit. The treasury is
+                // paid in full either way, just on the same schedule as everyone else.
                 //
-                // The vault's own convertToShares is reused and only re-based, so the ERC-4626
-                // virtual-share inflation protection stays intact rather than being re-derived.
-                uint256 recognised = IERC4626(vaultToken).totalAssets();
-                uint256 fullyVested = ItownSqUSD(vaultToken).virtualAssets();
+                // Read before either leg lands: both bases are live.
+                (uint256 feeShares, uint256 recognisedFee, uint256 vestingFee) =
+                    ItownSqUSD(vaultToken).previewProfitFee(netFee);
 
-                uint256 feeShares = IERC4626(vaultToken).convertToShares(netFee);
-                if (fullyVested > recognised) {
-                    feeShares = Math.mulDiv(feeShares, recognised + 1, fullyVested + 1);
-                }
+                // Safe to fold in a second time in the same transaction: `_updateVestingAmount`
+                // re-adds the still-unvested balance, and no time has elapsed since the call
+                // above, so the profit carries over intact on the shared schedule.
+                if (vestingFee > 0) ItownSqUSD(vaultToken).transferInRewards(vestingFee, true);
 
                 ManageAssetAndShares memory manageAssetAndShares = ManageAssetAndShares({
-                    vaultToken: vaultToken, shares: feeShares, assetAmount: netFee, updateAsset: true, isMint: true
+                    vaultToken: vaultToken,
+                    shares: feeShares,
+                    assetAmount: recognisedFee,
+                    updateAsset: recognisedFee > 0,
+                    isMint: true
                 });
                 IManager(manager).manageAssetAndShares(IManager(manager).treasury(), manageAssetAndShares);
             }
