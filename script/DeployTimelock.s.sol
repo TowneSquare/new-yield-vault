@@ -44,9 +44,13 @@ contract DeployTimelockScript is Script {
 
         vm.startBroadcast(deployerPk);
 
-        // admin == address(0): no separate timelock administrator. The Safe's proposer and
-        // executor rights are granted above and are all it needs; leaving an admin would be
-        // a standing bypass of the delay this contract exists to enforce.
+        // admin == address(0): no SEPARATE administrator. The Safe's proposer and executor
+        // rights are granted above and are all it needs; an optional admin would be a
+        // standing bypass of the delay this contract exists to enforce.
+        //
+        // Note this does not mean DEFAULT_ADMIN_ROLE is unheld: OZ v5 always grants it to
+        // the timelock itself. Role and delay changes therefore remain possible, but only
+        // as a proposal that has served the full delay.
         timelock = new TimelockController(MIN_DELAY, proposers, executors, address(0));
 
         vm.stopBroadcast();
@@ -57,14 +61,34 @@ contract DeployTimelockScript is Script {
         console.log("");
         console.log("Next: script/TimelockRoleChange.s.sol to migrate roles.");
 
-        _assertConfigured(timelock, safe);
+        _assertConfigured(timelock, safe, vm.addr(deployerPk));
     }
 
-    function _assertConfigured(TimelockController timelock, address safe) internal view {
-        require(timelock.getMinDelay() == MIN_DELAY, "minDelay mismatch");
-        require(timelock.hasRole(timelock.PROPOSER_ROLE(), safe), "safe is not proposer");
-        require(timelock.hasRole(timelock.CANCELLER_ROLE(), safe), "safe is not canceller");
-        require(timelock.hasRole(timelock.EXECUTOR_ROLE(), safe), "safe is not executor");
-        require(!timelock.hasRole(timelock.DEFAULT_ADMIN_ROLE(), address(this)), "deployer retains timelock admin");
+    /// @dev Renamed parameter: `timelock` would shadow the named return value above.
+    function _assertConfigured(TimelockController tl, address safe, address deployer) internal view {
+        require(tl.getMinDelay() == MIN_DELAY, "minDelay mismatch");
+        require(tl.hasRole(tl.PROPOSER_ROLE(), safe), "safe is not proposer");
+        require(tl.hasRole(tl.CANCELLER_ROLE(), safe), "safe is not canceller");
+        require(tl.hasRole(tl.EXECUTOR_ROLE(), safe), "safe is not executor");
+
+        // No EXTERNAL account may hold DEFAULT_ADMIN_ROLE -- such an address could grant
+        // itself PROPOSER and EXECUTOR and push a change through with no delay at all.
+        //
+        // Checked against the deployer and the Safe, NOT `address(this)`. Under `forge
+        // script` the broadcasting account is `vm.addr(deployerPk)`; `address(this)` is the
+        // script contract, which is never granted anything, so asserting on it always
+        // passes and verifies nothing.
+        require(!tl.hasRole(tl.DEFAULT_ADMIN_ROLE(), deployer), "deployer holds timelock DEFAULT_ADMIN");
+        require(!tl.hasRole(tl.DEFAULT_ADMIN_ROLE(), safe), "safe holds timelock DEFAULT_ADMIN");
+
+        // The timelock DOES hold DEFAULT_ADMIN_ROLE over itself -- OZ v5 grants it in the
+        // constructor ("self administration"), regardless of the `admin` argument. That is
+        // correct and required: it is how `updateDelay` and role changes happen, and being
+        // the timelock, it can only act on a proposal that has served its delay.
+        //
+        // Asserted rather than assumed so a future OZ version that drops self-administration
+        // -- leaving the delay and role set permanently frozen -- fails here instead of
+        // silently shipping.
+        require(tl.hasRole(tl.DEFAULT_ADMIN_ROLE(), address(tl)), "timelock cannot administer itself");
     }
 }

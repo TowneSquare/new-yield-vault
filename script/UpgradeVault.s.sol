@@ -5,6 +5,7 @@ import "forge-std/Script.sol";
 import {ERC1967Utils} from "openzeppelin-contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {TownSqToken} from "../src/TownSqToken.sol";
 import {Yield} from "../src/Yield.sol";
+import {Manager} from "../src/Manager.sol";
 
 /**
  * @title UpgradeVault
@@ -416,6 +417,176 @@ contract UpgradeVault is Script {
         console.log("4. Value is 0 on both");
     }
 
+    // =====================================================================================
+    //                    GUARDIAN UPGRADE: VAULT + MANAGER
+    //
+    // The guardian/whitelist-fix change spans TownSqToken and Manager. Yield is untouched.
+    //
+    // ORDER IS IRRELEVANT HERE, unlike the fee-split upgrade. Neither new implementation
+    // calls a new function on the other, so there is no broken window in either direction.
+    // The vault gains GUARDIAN_ROLE and a guardian-callable pause(); the Manager gains
+    // GUARDIAN_ROLE, removeWhitelistedAddresses(), and a call-time target check in
+    // execute(). They are independent.
+    // =====================================================================================
+
+    /// @dev Manager state the upgrade must leave untouched.
+    struct ManagerState {
+        address treasury;
+        address yield;
+        address townSqToken;
+        uint256 minShares;
+        uint256 maxRedeemCap;
+    }
+
+    /**
+     * @dev STEP 1 (GUARDIAN) - deploy both new implementations from an ordinary EOA.
+     *
+     *   forge script script/UpgradeVault.s.sol --sig 'deployImplementationsGuardian()' \
+     *     --rpc-url <chain> --broadcast --verify
+     */
+    function deployImplementationsGuardian() external {
+        uint256 pk = vm.envUint("DEPLOYER_PK");
+
+        vm.startBroadcast(pk);
+        TownSqToken vaultImpl = new TownSqToken();
+        Manager managerImpl = new Manager();
+        vm.stopBroadcast();
+
+        console.log("=== STEP 1 COMPLETE ===");
+        console.log("New vault implementation   :", address(vaultImpl));
+        console.log("New manager implementation :", address(managerImpl));
+        console.log("\nNow run step 2:");
+        console.log("  NEW_VAULT_IMPL=%s \\", address(vaultImpl));
+        console.log("  NEW_MANAGER_IMPL=%s \\", address(managerImpl));
+        console.log("  VAULT_PROXY=0x... MANAGER_PROXY=0x... ADMIN_ADDRESS=0x<safe> \\");
+        console.log("  forge script script/UpgradeVault.s.sol \\");
+        console.log("    --sig 'prepareMultisigUpgradeGuardian()' --rpc-url <chain>");
+    }
+
+    /**
+     * @dev STEP 2 (GUARDIAN) - simulate both upgrades as the Safe and print the transactions.
+     *      Broadcasts nothing.
+     *
+     *   VAULT_PROXY=0x... MANAGER_PROXY=0x... NEW_VAULT_IMPL=0x... NEW_MANAGER_IMPL=0x... \
+     *   ADMIN_ADDRESS=0x<safe> \
+     *   forge script script/UpgradeVault.s.sol --sig 'prepareMultisigUpgradeGuardian()' --rpc-url <chain>
+     */
+    function prepareMultisigUpgradeGuardian() external {
+        address vaultProxy = vm.envAddress("VAULT_PROXY");
+        address managerProxy = vm.envAddress("MANAGER_PROXY");
+        address newVaultImpl = vm.envAddress("NEW_VAULT_IMPL");
+        address newManagerImpl = vm.envAddress("NEW_MANAGER_IMPL");
+        address safe = vm.envAddress("ADMIN_ADDRESS");
+
+        TownSqToken vault = TownSqToken(vaultProxy);
+        Manager manager = Manager(managerProxy);
+
+        // ---------- pre-flight ----------
+        require(newVaultImpl.code.length > 0, "NEW_VAULT_IMPL has no code - run step 1 first");
+        require(newManagerImpl.code.length > 0, "NEW_MANAGER_IMPL has no code - run step 1 first");
+        require(vault.hasRole(vault.DEFAULT_ADMIN_ROLE(), safe), "the Safe lacks DEFAULT_ADMIN_ROLE on the vault");
+        require(manager.hasRole(manager.DEFAULT_ADMIN_ROLE(), safe), "the Safe lacks DEFAULT_ADMIN_ROLE on the manager");
+
+        // The two proxies must already know about each other, or the post-checks below test
+        // nothing -- and the Manager's tightened setWhitelistedAddresses now REQUIRES
+        // townSqToken to be set, so a mis-wired manager would break whitelisting after upgrade.
+        require(vault.manager() == managerProxy, "VAULT_PROXY does not point at MANAGER_PROXY");
+        require(manager.townSqToken() == vaultProxy, "MANAGER_PROXY does not point at VAULT_PROXY");
+
+        VaultState memory vaultBefore = _snapshot(vault);
+        ManagerState memory managerBefore = _snapshotManager(manager, vaultProxy);
+
+        console.log("=== PRE-UPGRADE ===");
+        console.log("Vault proxy         :", vaultProxy);
+        console.log("Manager proxy       :", managerProxy);
+        console.log("Safe (upgrade auth) :", safe);
+        _logState(vaultBefore);
+        console.log("  treasury          :", managerBefore.treasury);
+        console.log("  minShares         :", managerBefore.minShares);
+        console.log("  maxRedeemCap      :", managerBefore.maxRedeemCap);
+
+        // ---------- simulate ----------
+        vm.prank(safe);
+        vault.upgradeToAndCall(newVaultImpl, "");
+        vm.prank(safe);
+        manager.upgradeToAndCall(newManagerImpl, "");
+
+        _assertStatePreserved(vaultBefore, _snapshot(vault));
+        _assertManagerStatePreserved(managerBefore, _snapshotManager(manager, vaultProxy));
+
+        // Probes: this selector exists only on the NEW implementations, so answering it
+        // proves the upgrade took effect rather than silently pointing at a stale build.
+        //
+        // Done via staticcall rather than a typed call: against an implementation that does
+        // not define GUARDIAN_ROLE the typed call reverts with EMPTY data, so a `require`
+        // message would never be reached and the operator sees "<empty revert data>" with
+        // no indication of what went wrong. This reports the actual problem.
+        _requireGuardianRole(vaultProxy, "NEW_VAULT_IMPL");
+        _requireGuardianRole(managerProxy, "NEW_MANAGER_IMPL");
+
+        console.log("\n=== SIMULATION PASSED ===");
+        console.log("Both upgrades succeed, all state preserved, GUARDIAN_ROLE live.");
+
+        console.log("\n=== SAFE TRANSACTION 1 of 2 - THE VAULT ===");
+        console.log("To      :", vaultProxy);
+        console.log("Value   : 0");
+        console.log("Arg 1   :", newVaultImpl);
+        console.log("Data    :");
+        console.logBytes(abi.encodeWithSignature("upgradeToAndCall(address,bytes)", newVaultImpl, bytes("")));
+
+        console.log("\n=== SAFE TRANSACTION 2 of 2 - THE MANAGER ===");
+        console.log("To      :", managerProxy);
+        console.log("Value   : 0");
+        console.log("Arg 1   :", newManagerImpl);
+        console.log("Data    :");
+        console.logBytes(abi.encodeWithSignature("upgradeToAndCall(address,bytes)", newManagerImpl, bytes("")));
+
+        console.log("\n=== FOR THE SIGNERS TO CHECK INDEPENDENTLY ===");
+        console.log("1. Each `To` is a PROXY, not an implementation");
+        console.log("2. Arg 2 is empty on both - non-empty data runs arbitrary code via delegatecall");
+        console.log("3. Value is 0 on both");
+        console.log("4. Order does NOT matter here (unlike the fee-split upgrade)");
+
+        console.log("\n=== REQUIRED FOLLOW-UP - THE UPGRADE ALONE IS NOT ENOUGH ===");
+        console.log("GUARDIAN_ROLE exists after this but is held by NOBODY, so there is no");
+        console.log("working emergency pause until it is granted. Grant it in the same Safe");
+        console.log("batch, or immediately after:");
+        console.log("  vault.grantRole(GUARDIAN_ROLE, <safe>)");
+        console.log("  manager.grantRole(GUARDIAN_ROLE, <safe>)");
+        console.log("script/TimelockRoleChange.s.sol emits this as part of the handover batch.");
+    }
+
+    /// @dev Asserts `proxy` answers GUARDIAN_ROLE(), i.e. it is running a guardian-aware
+    ///      implementation. Reports which env var points at the wrong build.
+    function _requireGuardianRole(address proxy, string memory label) internal view {
+        (bool ok, bytes memory ret) = proxy.staticcall(abi.encodeWithSignature("GUARDIAN_ROLE()"));
+        if (!ok || ret.length != 32 || abi.decode(ret, (bytes32)) != keccak256("GUARDIAN_ROLE")) {
+            revert(
+                string.concat(
+                    label,
+                    " does not implement GUARDIAN_ROLE - it is not a guardian-aware build. ",
+                    "Re-run deployImplementationsGuardian() and use the addresses it prints."
+                )
+            );
+        }
+    }
+
+    function _snapshotManager(Manager m, address vaultProxy) internal view returns (ManagerState memory s) {
+        s.treasury = m.treasury();
+        s.yield = m.yield();
+        s.townSqToken = m.townSqToken();
+        s.minShares = m.minSharesInVaultToken(vaultProxy);
+        s.maxRedeemCap = m.maxRedeemCap(vaultProxy);
+    }
+
+    function _assertManagerStatePreserved(ManagerState memory a, ManagerState memory b) internal pure {
+        require(a.treasury == b.treasury, "manager treasury changed");
+        require(a.yield == b.yield, "manager yield changed");
+        require(a.townSqToken == b.townSqToken, "manager townSqToken changed");
+        require(a.minShares == b.minShares, "manager minShares changed");
+        require(a.maxRedeemCap == b.maxRedeemCap, "manager maxRedeemCap changed");
+    }
+
     function _snapshot(TownSqToken vault) internal view returns (VaultState memory s) {
         s.name = vault.name();
         s.symbol = vault.symbol();
@@ -469,6 +640,34 @@ contract UpgradeVault is Script {
     }
 }
 
+// ===================== SAFE RUNBOOK: GUARDIAN UPGRADE (VAULT + MANAGER) ===================
+//
+// For the GUARDIAN_ROLE / whitelist-escalation-fix change. Yield is NOT upgraded.
+//
+// Step 1 - deploy both implementations from any EOA:
+//
+// forge script script/UpgradeVault.s.sol --sig 'deployImplementationsGuardian()' \
+//   --rpc-url <chain> --broadcast --verify
+//
+// Step 2 - simulate as the Safe and print BOTH transactions to sign:
+//
+// VAULT_PROXY=0x... MANAGER_PROXY=0x... \
+// NEW_VAULT_IMPL=<from step 1> NEW_MANAGER_IMPL=<from step 1> ADMIN_ADDRESS=<safe> \
+// forge script script/UpgradeVault.s.sol --sig 'prepareMultisigUpgradeGuardian()' --rpc-url <chain>
+//
+// Step 3 - the Safe executes both. Order does not matter: neither implementation calls a
+//          new function on the other.
+//
+// Step 4 - GRANT GUARDIAN_ROLE. The upgrade creates the role but assigns it to nobody, so
+//          until this lands there is no working emergency pause:
+//            vault.grantRole(GUARDIAN_ROLE, <safe>)
+//            manager.grantRole(GUARDIAN_ROLE, <safe>)
+//          script/TimelockRoleChange.s.sol emits these as part of the handover batch, so if
+//          you are moving to the timelock at the same time, use that instead of doing both.
+//
+// Pre-flight against live state:
+//   forge test --match-path test/TimelockHandover.fork.t.sol -vv
+//
 // ===================== SAFE RUNBOOK: FEE-SPLIT UPGRADE (BOTH PROXIES) =====================
 //
 // Step 1 - deploy both implementations from any EOA:

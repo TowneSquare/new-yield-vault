@@ -5,6 +5,12 @@ out/
 # Ignores development broadcast logs
 broadcast/
 
+
+# `safe/*` and not `safe/`: git does not descend into an excluded directory, so a
+# negation for a file inside one can never take effect.
+safe/*
+!safe/.gitkeep
+
 # Dotenv file
 .env
 # Dependencies

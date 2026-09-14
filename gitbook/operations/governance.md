@@ -143,15 +143,31 @@ cast call <proxy> "hasRole(bytes32,address)(bool)" \
 cast call <timelock> "getMinDelay()(uint256)" --rpc-url $RPC   # expect 172800
 ```
 
-Also confirm nobody holds a standing bypass of the timelock:
+Also confirm no **external** account holds a standing bypass:
 
 ```bash
 cast call <timelock> "hasRole(bytes32,address)(bool)" \
-  0x0000000000000000000000000000000000000000000000000000000000000000 <any address> \
-  --rpc-url $RPC   # expect false for everyone
+  0x0000000000000000000000000000000000000000000000000000000000000000 <safe> \
+  --rpc-url $RPC   # expect false — and false for every EOA or multisig you check
 ```
 
-The timelock is deployed with `admin = address(0)` precisely so no such address exists.
+The timelock is deployed with `admin = address(0)` precisely so no such account exists.
+
+{% hint style="info" %}
+**The timelock itself does hold `DEFAULT_ADMIN_ROLE` over itself**, and that is correct.
+OpenZeppelin v5 grants it in the constructor ("self administration") whatever the `admin`
+argument says. It is how `updateDelay` and role changes are possible at all — and because
+the holder *is* the timelock, exercising it still requires a proposal that has served the
+full delay.
+
+So this returns `true`, and should:
+
+```bash
+cast call <timelock> "hasRole(bytes32,address)(bool)" 0x00...00 <timelock> --rpc-url $RPC
+```
+
+What must be `false` is every *external* address.
+{% endhint %}
 
 ## What a depositor sees
 
