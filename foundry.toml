@@ -10,6 +10,10 @@ optimizer = true
 optimizer_runs = 200
 via_ir = true
 
+# Scoped write access for scripts that emit multisig payloads (script/SafeRoleChange.s.sol).
+# Deliberately a dedicated directory rather than "./" so a script cannot overwrite sources.
+fs_permissions = [{ access = "read-write", path = "./safe" }]
+
 # Fork-test RPC endpoints. Values come from the environment (.env) so that no URL or
 # API key is ever committed to source. Reference these in tests with vm.rpcUrl("<key>"),
 # never a literal URL.
@@ -18,5 +22,7 @@ mainnet = "${ETH_RPC_URL}"
 monad = "${MONAD_RPC_URL}"
 base = "${BASE_RPC_URL}"
 bsc = "${BSC_RPC_URL}"
+xlayer = "${XLAYER_RPC_URL}"
+robinhood = "${ROBINHOOD_RPC_URL}"
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

@@ -52,6 +52,12 @@ contract TownSqToken is
 
     // ============ CONSTANTS ============
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    /// @dev Emergency-only role. Held by a hot multisig so an exploit can be halted without
+    /// waiting out the timelock that governs ADMIN_ROLE. Deliberately asymmetric: the
+    /// guardian can `pause` but not `unpause`, and can remove whitelist entries but not add
+    /// them, so the worst a compromised guardian achieves is a denial of service that
+    /// ADMIN_ROLE can undo.
+    bytes32 public constant GUARDIAN_ROLE = keccak256("GUARDIAN_ROLE");
     uint256 public constant PRECISION = 1e18;
     uint256 constant HUNDRED_PERCENT = 100e18;
     uint256 constant ONE_PERCENT = 1e18;
@@ -213,15 +219,25 @@ contract TownSqToken is
     }
 
     /**
-     * @dev Pause all vault operations (admin only)
+     * @dev Pause all vault operations (guardian or admin)
+     * @notice Callable by GUARDIAN_ROLE without delay. ADMIN_ROLE sits behind the timelock,
+     * so routing an emergency halt through it alone would mean a 48-hour wait while an
+     * exploit ran. Pausing is a reversible denial of service, which is the cheapest power
+     * to hand a hot key.
      */
-    function pause() external onlyRole(ADMIN_ROLE) {
+    function pause() external {
+        if (!hasRole(GUARDIAN_ROLE, msg.sender) && !hasRole(ADMIN_ROLE, msg.sender)) {
+            revert Errors.NotAuthorized();
+        }
         _pause();
         emit Paused(msg.sender);
     }
 
     /**
      * @dev Unpause all vault operations (admin only)
+     * @notice Intentionally NOT available to GUARDIAN_ROLE. Pause fast, resume slow: pause
+     * blocks user withdrawals (see KNOWN_ISSUES K-01), so lifting it is a decision that
+     * should carry the timelock's delay and visibility.
      */
     function unpause() external onlyRole(ADMIN_ROLE) {
         _unpause();

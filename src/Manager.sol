@@ -30,6 +30,11 @@ contract Manager is Initializable, UUPSUpgradeable, AccessControlUpgradeable, IM
     // ============ CONSTANTS ============
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+    /// @dev Emergency-only role. Held by a hot multisig so a compromised destination can be
+    /// revoked without waiting out the timelock that governs ADMIN_ROLE. Can only REMOVE
+    /// whitelist entries, never add them -- a compromised guardian can strand capital
+    /// deployment, which ADMIN_ROLE can undo, but cannot create a path for funds to leave.
+    bytes32 public constant GUARDIAN_ROLE = keccak256("GUARDIAN_ROLE");
 
     // ============ STATE VARIABLES ============
     address public treasury;
@@ -86,6 +91,14 @@ contract Manager is Initializable, UUPSUpgradeable, AccessControlUpgradeable, IM
     function setManagerAndYield(address _yield, address _townSqToken) external onlyRole(ADMIN_ROLE) {
         if (_yield == address(0)) revert Errors.InvalidAddress();
         if (_townSqToken == address(0)) revert Errors.InvalidAddress();
+
+        // Never point the protocol at an address that is already a valid `execute` target.
+        // Whitelisting an address while it is inert and only then promoting it to vault or
+        // yield is the second way the write-time guard above can be stepped around.
+        if (whitelistedAddresses[_townSqToken] || whitelistedAddresses[_yield]) {
+            revert Errors.NotWhitelisted();
+        }
+
         yield = _yield;
         townSqToken = _townSqToken;
         emit YieldSet(msg.sender, _yield);
@@ -102,11 +115,47 @@ contract Manager is Initializable, UUPSUpgradeable, AccessControlUpgradeable, IM
         onlyRole(ADMIN_ROLE)
     {
         if (_wallets.length != _statuses.length) revert Errors.LengthMismatch();
+
+        // Refuse to build a whitelist before the protocol's own addresses are known.
+        // `initialize` leaves `townSqToken` at address(0), and a guard comparing against
+        // address(0) waves the real vault straight through.
+        if (townSqToken == address(0)) revert Errors.NotInitialized();
+
         for (uint256 i = 0; i < _wallets.length; i++) {
-            // Security: Prevent whitelisting the TownSqToken and Yield
-            if (_wallets[i] == townSqToken || _wallets[i] == yield) revert Errors.NotWhitelisted();
+            // Security: prevent whitelisting the protocol's own contracts. `execute` calls
+            // out as this contract, so any of these becoming a valid target would let
+            // OPERATOR_ROLE act with the Manager's authority over vault accounting.
+            //
+            // Defence in depth only -- `execute` re-checks this at call time, which is what
+            // actually enforces it. Keeping it here fails a misconfiguration loudly at the
+            // point it is introduced rather than silently months later.
+            if (
+                _wallets[i] == address(0) || _wallets[i] == address(this) || _wallets[i] == townSqToken
+                    || _wallets[i] == yield
+            ) {
+                revert Errors.NotWhitelisted();
+            }
             whitelistedAddresses[_wallets[i]] = _statuses[i];
             emit WhitelistUpdated(msg.sender, _wallets[i], _statuses[i]);
+        }
+    }
+
+    /**
+     * @dev Revoke whitelist entries without delay (guardian or admin)
+     * @notice Removal-only counterpart to `setWhitelistedAddresses`. Additions run through
+     * ADMIN_ROLE and therefore the timelock, because authorising a new destination for
+     * custodied funds is exactly the decision depositors deserve warning of. Removal is the
+     * opposite: a destination discovered to be compromised must be cut off in the same
+     * block, not in 48 hours. This function can only ever write `false`.
+     * @param _wallets Addresses to revoke
+     */
+    function removeWhitelistedAddresses(address[] calldata _wallets) external {
+        if (!hasRole(GUARDIAN_ROLE, msg.sender) && !hasRole(ADMIN_ROLE, msg.sender)) {
+            revert Errors.NotAuthorized();
+        }
+        for (uint256 i = 0; i < _wallets.length; i++) {
+            whitelistedAddresses[_wallets[i]] = false;
+            emit WhitelistUpdated(msg.sender, _wallets[i], false);
         }
     }
 
@@ -123,11 +172,35 @@ contract Manager is Initializable, UUPSUpgradeable, AccessControlUpgradeable, IM
     {
         if (targets.length != data.length) revert Errors.LengthMismatch();
         results = new bytes[](data.length);
+
+        // Cached outside the loop: neither can change while this function runs, so the
+        // protocol's own addresses cost two SLOADs in total rather than two per target.
+        address vaultAddr = townSqToken;
+        address yieldAddr = yield;
+
         for (uint256 i = 0; i < data.length; i++) {
-            if (!whitelistedAddresses[targets[i]]) {
+            address target = targets[i];
+            if (!whitelistedAddresses[target]) {
                 revert Errors.NotWhitelisted();
             }
-            (bool success, bytes memory result) = targets[i].call(data[i]);
+
+            // Re-checked HERE, at call time, and not only where entries are written.
+            // `execute` sends calls as this contract, and the vault authorises its own
+            // accounting entry points on `msg.sender == manager` -- so a whitelisted vault
+            // would hand OPERATOR_ROLE the power to forge `totalAssets` and mint shares.
+            //
+            // The write-time guard in `setWhitelistedAddresses` compares against
+            // `townSqToken`, which is mutable: it is address(0) between `initialize` and
+            // `setManagerAndYield`, and `setManagerAndYield` can later repoint it at an
+            // address that was whitelisted while it was still inert. Either ordering leaves
+            // a live entry the write-time check never sees again. Checking at the point of
+            // use closes the gap, because there is no longer an interval between the check
+            // and the call. See test/POC-WhitelistEscalation.t.sol.
+            if (target == vaultAddr || target == yieldAddr || target == address(this)) {
+                revert Errors.NotWhitelisted();
+            }
+
+            (bool success, bytes memory result) = target.call(data[i]);
             if (!success) {
                 assembly {
                     revert(add(result, 32), mload(result))

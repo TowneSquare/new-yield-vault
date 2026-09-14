@@ -236,6 +236,10 @@ contract UpgradeVault is Script {
     // A Safe cannot sign an EOA transaction, so `run()` above does not apply. Split it:
     //   Step 1: any EOA deploys the implementation (needs no privileges)
     //   Step 2: simulate the upgrade AS the Safe, then hand the calldata to the signers
+    //
+    // For the fee-split change BOTH proxies move, so use the `Both` variants:
+    //   deployImplementationsBoth() -> prepareMultisigUpgradeBoth()
+    // The single-proxy pair below remains for a vault-only upgrade.
     // =====================================================================================
 
     /**
@@ -255,6 +259,34 @@ contract UpgradeVault is Script {
         console.log("=== STEP 1 COMPLETE ===");
         console.log("New implementation deployed at:", address(impl));
         console.log("\nNow run step 2 with NEW_IMPL set to that address.");
+    }
+
+    /**
+     * @dev STEP 1 (BOTH) - deploy both new implementations from an ordinary EOA. Deploying an
+     *      implementation needs no privileges and touches no proxy, so the order is irrelevant
+     *      here — it is the UPGRADE order in step 2 that matters.
+     *
+     *   forge script script/UpgradeVault.s.sol --sig 'deployImplementationsBoth()' \
+     *     --rpc-url monad --broadcast --verify --verifier sourcify \
+     *     --verifier-url 'https://sourcify-api-monad.blockvision.org/'
+     */
+    function deployImplementationsBoth() external {
+        uint256 pk = vm.envUint("DEPLOYER_PK");
+
+        vm.startBroadcast(pk);
+        TownSqToken vaultImpl = new TownSqToken();
+        Yield yieldImpl = new Yield();
+        vm.stopBroadcast();
+
+        console.log("=== STEP 1 COMPLETE ===");
+        console.log("New vault implementation :", address(vaultImpl));
+        console.log("New yield implementation :", address(yieldImpl));
+        console.log("\nNow run step 2:");
+        console.log("  NEW_VAULT_IMPL=%s \\", address(vaultImpl));
+        console.log("  NEW_YIELD_IMPL=%s \\", address(yieldImpl));
+        console.log("  VAULT_PROXY=0x... YIELD_PROXY=0x... ADMIN_ADDRESS=0x<safe> \\");
+        console.log("  forge script script/UpgradeVault.s.sol \\");
+        console.log("    --sig 'prepareMultisigUpgradeBoth()' --rpc-url monad");
     }
 
     /**
@@ -437,6 +469,27 @@ contract UpgradeVault is Script {
     }
 }
 
+// ===================== SAFE RUNBOOK: FEE-SPLIT UPGRADE (BOTH PROXIES) =====================
+//
+// Step 1 - deploy both implementations from any EOA:
+//
+// forge script script/UpgradeVault.s.sol --sig 'deployImplementationsBoth()' \
+//   --rpc-url monad --broadcast \
+//   --verify --verifier sourcify \
+//   --verifier-url 'https://sourcify-api-monad.blockvision.org/'
+//
+// Step 2 - simulate as the Safe and print BOTH transactions to sign:
+//
+// VAULT_PROXY=0x... YIELD_PROXY=0x... \
+// NEW_VAULT_IMPL=<from step 1> NEW_YIELD_IMPL=<from step 1> ADMIN_ADDRESS=<safe> \
+// forge script script/UpgradeVault.s.sol --sig 'prepareMultisigUpgradeBoth()' --rpc-url monad
+//
+// Step 3 - the Safe executes tx 1 (vault) and waits for it to be MINED before tx 2 (yield).
+//          Reversed, fee-bearing profit epochs revert while zero-fee ones keep succeeding,
+//          so the breakage is silent until the first fee epoch.
+//
+// ===================== SAFE RUNBOOK: VAULT-ONLY UPGRADE ===================================
+//
 // forge script script/UpgradeVault.s.sol --sig 'deployImplementation()' \
 //   --rpc-url monad --broadcast \
 //   --verify --verifier sourcify \
