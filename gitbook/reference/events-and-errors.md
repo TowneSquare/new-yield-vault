@@ -107,8 +107,12 @@ this is a known rough edge, not a malfunction.
 | `Upgraded` | all three | Contract code replaced |
 
 {% hint style="warning" %}
-`Upgraded`, `RoleGranted`, and `WhitelistUpdated` all take effect immediately — there is no
-timelock, so monitoring them is reactive rather than preventative.
+`Upgraded`, `RoleGranted`, and `WhitelistUpdated` are the moment a change takes effect. Every
+upgrade, role grant and whitelist addition is first scheduled on the 48-hour timelock, so
+watch `CallScheduled` on the timelock too — it fires 48 hours earlier, which makes
+monitoring them is preventative, not just reactive. `WhitelistUpdated` with `status = false`
+is the exception: the guardian can remove entries instantly. See
+[Governance and the timelock](../operations/governance.md).
 {% endhint %}
 
 ## Monitoring gaps

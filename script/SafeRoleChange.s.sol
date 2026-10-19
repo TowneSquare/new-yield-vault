@@ -56,18 +56,22 @@ contract SafeRoleChange is Script {
         // ---------- pre-flight against live state ----------
         require(NEW_VAULT_IMPL.code.length > 0, "NEW_VAULT_IMPL has no code");
         require(NEW_YIELD_IMPL.code.length > 0, "NEW_YIELD_IMPL has no code");
-        require(
-            Yield(YIELD_PROXY).getTownSqToken() == VAULT_PROXY, "YIELD_PROXY does not point at VAULT_PROXY"
-        );
+        require(Yield(YIELD_PROXY).getTownSqToken() == VAULT_PROXY, "YIELD_PROXY does not point at VAULT_PROXY");
 
         // ---------- 1-2: implementations, VAULT FIRST ----------
         // The new Yield calls previewProfitFee, which only the new vault implements. Reversed,
         // fee-bearing profit epochs revert while zero-fee ones keep succeeding, so the
         // breakage is silent until the first fee epoch.
-        _add(VAULT_PROXY, abi.encodeWithSignature("upgradeToAndCall(address,bytes)", NEW_VAULT_IMPL, bytes("")),
-            "1. vault upgradeToAndCall(newVaultImpl)");
-        _add(YIELD_PROXY, abi.encodeWithSignature("upgradeToAndCall(address,bytes)", NEW_YIELD_IMPL, bytes("")),
-            "2. yield upgradeToAndCall(newYieldImpl)");
+        _add(
+            VAULT_PROXY,
+            abi.encodeWithSignature("upgradeToAndCall(address,bytes)", NEW_VAULT_IMPL, bytes("")),
+            "1. vault upgradeToAndCall(newVaultImpl)"
+        );
+        _add(
+            YIELD_PROXY,
+            abi.encodeWithSignature("upgradeToAndCall(address,bytes)", NEW_YIELD_IMPL, bytes("")),
+            "2. yield upgradeToAndCall(newYieldImpl)"
+        );
 
         // ---------- 3: vault roles ----------
         // Grant before revoke, and revoke DEFAULT_ADMIN last, so the Safe never strips its own
@@ -195,7 +199,7 @@ contract SafeRoleChange is Script {
             vm.toString(block.timestamp),
             ',"meta":{"name":"townSqVault fee-split upgrade + admin handover",',
             '"description":"Upgrades vault then yield to the fee-split implementations, then ',
-            'rotates DEFAULT_ADMIN/ADMIN/OPERATOR/REBALANCER from the old Safe to the new Safe ',
+            "rotates DEFAULT_ADMIN/ADMIN/OPERATOR/REBALANCER from the old Safe to the new Safe ",
             'across all three proxies. Order is load-bearing.",',
             '"txBuilderVersion":"1.16.5"},"transactions":['
         );

@@ -293,7 +293,16 @@ Listed so you know they exist and who controls them:
 | `transferToVault` | Manager | Operator |
 | `redeemFor` | Vault / Manager | Manager only — pays the user their locked amount, no cooldown check |
 | `distributeYield` | Yield | Rebalancer — see [above](#how-profit-and-loss-reach-your-shares) |
-| `setFee`, `setCooldownPeriod`, `setVestingPeriod` | Vault | Admin |
-| `pause`, `unpause`, `emergencyRecover` | Vault | Admin |
-| `setWhitelistedAddresses`, `setTreasury` | Manager | Admin |
+| `setFee`, `setCooldownPeriod`, `setVestingPeriod`, `setManager` | Vault | Admin |
+| `unpause`, `emergencyRecover` | Vault | Admin |
+| `pause` | Vault | Admin or Guardian |
+| `setWhitelistedAddresses`, `setTreasury`, `setManagerAndYield` | Manager | Admin |
+| `setMinSharesInVaultToken`, `setMaxRedeemCap` | Manager | Admin |
+| `removeWhitelistedAddresses` | Manager | Admin or Guardian |
+| `setMaxYieldPercentage`, `setMaxFeePercentage`, `setMinDistributionInterval`, `setManager` | Yield | Admin |
+| `upgradeToAndCall`, `grantRole`, `revokeRole` | all three | Governance |
 | `updateTotalAssets`, `mintVaultToken`, `burnVaultToken` | Vault | Manager only |
+| `transferInRewards` | Vault | Yield only |
+| `manageAssetAndShares` | Manager | Yield only |
+
+What each one does is in [Roles and permissions](roles.md).

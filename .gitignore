@@ -54,3 +54,5 @@ out_forge/
 
 # Wake directory
 .wake/
+
+.osmium/*

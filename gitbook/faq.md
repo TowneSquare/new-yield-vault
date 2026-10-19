@@ -199,7 +199,8 @@ while it owes.
 
 <summary>Can the fees change after I deposit?</summary>
 
-Yes, and with no timelock. The exit fee cannot exceed 1% — that ceiling is enforced in the
+Yes, but not without warning. Every fee change goes through a 48-hour timelock, so it is
+public for 48 hours before it takes effect. The exit fee cannot exceed 1% — that ceiling is enforced in the
 contract. The performance fee cap can be raised to 100% of reported profit.
 
 Check `fee()` and `maxFeePercentage()` before depositing, and watch `FeeSet` and
@@ -225,7 +226,7 @@ owed.
 
 No. The protocol's own invariant documentation states that *"users can always eventually
 withdraw"* **does not hold**. Withdrawal requires an operator to fund the vault, and an
-admin pause blocks it entirely. Neither can be forced onchain.
+pause blocks it entirely. Neither can be forced onchain.
 
 </details>
 
@@ -235,7 +236,9 @@ admin pause blocks it entirely. Neither can be forced onchain.
 
 The admin can call `emergencyRecover`, which transfers any token out of the vault —
 including assets already earmarked for pending redemptions. The admin can also whitelist a
-destination and deploy capital to it in the same block, with no timelock.
+destination for capital. Both go through a 48-hour timelock, so they are public for 48
+hours before they can happen — see
+[Governance and the timelock](operations/governance.md).
 
 This is why the admin should be a multisig, and why it is worth verifying that yourself
 with `getOwners()` and `getThreshold()`. See [Roles](reference/roles.md).
@@ -246,8 +249,9 @@ with `getOwners()` and `getThreshold()`. See [Roles](reference/roles.md).
 
 <summary>Can the contracts change after I deposit?</summary>
 
-Yes. All three are upgradeable, effective immediately, with no timelock. There is no window
-in which to exit ahead of a change. An upgrade can override every limit described in this
+Yes. All three are upgradeable, but every upgrade is scheduled publicly on a 48-hour
+timelock before it can execute. That is your window to exit — unless the vault is paused,
+which blocks withdrawals. See [Governance and the timelock](operations/governance.md). An upgrade can override every limit described in this
 documentation, including the 1% fee cap.
 
 Watch the `Upgraded` event.

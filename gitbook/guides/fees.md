@@ -51,7 +51,8 @@ cast call <yield> "maxFeePercentage()(uint256)" --rpc-url <rpc>
 {% hint style="warning" %}
 **This cap is adjustable up to 100%.** The contract only checks that the value is at most
 `10_000` basis points, so governance can in principle assign all reported profit to the
-treasury. There is no timelock on the change. Unlike the exit fee, there is no structural
+treasury. The change goes through the 48-hour timelock, so it is public before it takes
+effect (see [Governance](../operations/governance.md)). Unlike the exit fee, there is no structural
 ceiling here.
 {% endhint %}
 
@@ -98,7 +99,7 @@ treasury.
 
 ## Checking current terms
 
-Fees can change without notice — there is no timelock. Before depositing:
+Fees can change, with 48 hours' public notice through the timelock. Before depositing:
 
 ```bash
 cast call <vault> "fee()(uint256)" --rpc-url <rpc>

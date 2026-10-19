@@ -8,7 +8,7 @@ import {AccessControlUpgradeable} from "openzeppelin-contracts-upgradeable/acces
 // transpiles an upgradeable variant — the non-upgradeable version is proxy-safe.
 import {ReentrancyGuard} from "openzeppelin-contracts/utils/ReentrancyGuard.sol";
 import {PausableUpgradeable} from "openzeppelin-contracts-upgradeable/utils/PausableUpgradeable.sol";
-import {Math} from"openzeppelin-contracts/utils/math/Math.sol";
+import {Math} from "openzeppelin-contracts/utils/math/Math.sol";
 import {IERC20Metadata, IERC20} from "openzeppelin-contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "openzeppelin-contracts/token/ERC20/utils/SafeERC20.sol";
 import {Initializable} from "openzeppelin-contracts-upgradeable/proxy/utils/Initializable.sol";

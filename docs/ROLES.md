@@ -9,21 +9,21 @@ an onchain constraint, it is marked as such.
 
 ## Summary
 
-Four roles exist across three contracts on the **current live deployment**. There is no
-`CURATOR_ROLE`, no timelock, and no role that is restricted to risk parameters alone.
+Five roles exist across three contracts. There is no `CURATOR_ROLE`, and no role that is
+restricted to risk parameters alone.
 
-> **Pending change.** A 48-hour `TimelockController` and a fifth role, `GUARDIAN_ROLE`, are
-> implemented in `src/` and covered by `test/Timelock.t.sol` and
-> `test/TimelockHandover.fork.t.sol`, but are **not deployed**. After the handover,
-> `DEFAULT_ADMIN_ROLE` and `ADMIN_ROLE` move to the timelock and every governance action
-> takes 48 hours; `GUARDIAN_ROLE` retains instant `pause()` and instant whitelist removal.
-> See the [Post-timelock model](#post-timelock-model-pending) section below. Everything
-> before that section describes live state today.
+> **Timelock live.** The handover has executed. `DEFAULT_ADMIN_ROLE` and `ADMIN_ROLE` on all
+> three proxies are held by a 48-hour `TimelockController`, so every function in those two
+> sections below executes only after a public 48-hour delay. The Safe is proposer, executor
+> and canceller, and holds `GUARDIAN_ROLE`, which keeps instant `pause()` and instant
+> whitelist removal. See [Timelock model](#timelock-model) below.
+> `OPERATOR_ROLE` and `REBALANCER_ROLE` are unchanged and undelayed.
 
 | Role | Contracts | Intended holder | Can move assets | Can move share price |
 |---|---|---|---|---|
-| `DEFAULT_ADMIN_ROLE` | all three | Governance multisig | **Yes** (via upgrade, `emergencyRecover`) | **Yes** (via upgrade) |
-| `ADMIN_ROLE` | all three | Governance multisig | **Yes** (`emergencyRecover`, whitelist) | Indirectly (parameters) |
+| `DEFAULT_ADMIN_ROLE` | all three | TimelockController (48h) | **Yes** (via upgrade, `emergencyRecover`) | **Yes** (via upgrade) |
+| `ADMIN_ROLE` | all three | TimelockController (48h) | **Yes** (`emergencyRecover`, whitelist) | Indirectly (parameters) |
+| `GUARDIAN_ROLE` | TownSqToken, Manager | Safe | No | No |
 | `OPERATOR_ROLE` | Manager | Executor (bot/Safe) | **Yes** (`execute`) | No |
 | `REBALANCER_ROLE` | Yield | Offchain yield engine | No | **Yes** (entirely) |
 
@@ -66,17 +66,19 @@ Highest privilege. Holds two distinct powers.
 `_authorizeUpgrade(address)` — `TownSqToken.sol:115`, `Manager.sol:68`, `Yield.sol:93`
 
 All three contracts are UUPS. `DEFAULT_ADMIN_ROLE` can replace the implementation of any of
-them with arbitrary code, with no timelock and no upgrade-safety check enforced onchain.
+them with arbitrary code, after the 48-hour timelock delay and with no upgrade-safety check
+enforced onchain.
 This subsumes every other capability in this document: a malicious upgrade can mint shares,
 rewrite accounting, or transfer custodied assets.
 
 ### Role administration
 
-`grantRole` / `revokeRole` on all four roles, across all three proxies. Immediate effect.
+`grantRole` / `revokeRole` on all five roles, across all three proxies. Effective after the
+48-hour timelock delay.
 
-**Consequence:** `DEFAULT_ADMIN_ROLE` is the root of trust for the entire protocol. It must
-be a multisig; a timelock in front of it is the single highest-value control improvement
-available.
+**Consequence:** `DEFAULT_ADMIN_ROLE` is the root of trust for the entire protocol. It is
+held by the timelock, whose only proposer is the Safe — so the Safe's signing threshold,
+plus 48 hours of public notice, is what stands between the protocol and a hostile upgrade.
 
 ---
 
@@ -93,7 +95,7 @@ separable into "risk only" as currently written.
 | `setCooldownPeriod` | `L209` | Delay between request and withdrawal | `<= 7 days`, hard-coded |
 | `setVestingPeriod` | `L332` | Linear profit vesting window | `<= 30 days`, hard-coded |
 | `setManager` | `L343` | Repoints the Manager address | non-zero only |
-| `pause` / `unpause` | `L218`, `L226` | Halts deposit, withdraw, redeem, redeemFor, requestRedeem | none |
+| `pause` / `unpause` | `L228`, `L242` | Halts deposit, withdraw, redeem, redeemFor, requestRedeem. `pause` is shared with `GUARDIAN_ROLE`; `unpause` is admin-only | none |
 | `emergencyRecover` | `L355` | Transfers any ERC-20 or native balance out of the vault | balance only |
 
 Two of these are not risk parameters:
@@ -114,10 +116,12 @@ Two of these are not risk parameters:
 | `setManagerAndYield` | `L86` | Repoints Yield and TownSqToken | non-zero only |
 | `setMaxRedeemCap` | `L168` | Max assets per redemption request | none; `0` == uncapped |
 | `setMinSharesInVaultToken` | `L157` | Minimum shares per deposit | must be non-zero |
+| `removeWhitelistedAddresses` | `L152` | Removes allowlist entries | removal only; shared with `GUARDIAN_ROLE` |
 
 `setWhitelistedAddresses` is the most consequential `ADMIN_ROLE` function. The whitelist is
-the *only* constraint on where custodied assets can be sent by `OPERATOR_ROLE`. There is no
-timelock: an address can be whitelisted and drained to in the same block.
+the *only* constraint on where custodied assets can be sent by `OPERATOR_ROLE`. Additions
+go through the 48-hour timelock, so a new destination is public 48 hours before capital can
+reach it.
 
 The guard at `L107` is load-bearing — it prevents whitelisting `townSqToken` or `yield`,
 which would otherwise let `OPERATOR_ROLE` reach `mintVaultToken` and `updateTotalAssets`
@@ -133,7 +137,7 @@ through `execute` and forge share supply.
 | `setManager` | `L138` | Repoints the Manager address | — |
 
 `setMaxFeePercentage` accepts up to `10_000` — **100% of reported profit assignable to the
-treasury**, with no timelock. Unlike the exit fee's hard-coded 1% ceiling, there is no
+treasury**, after the 48-hour delay. Unlike the exit fee's hard-coded 1% ceiling, there is no
 structural bound here.
 
 `setMinDistributionInterval` rejects `0` (`L117`) but accepts `1`, so the rate limit
@@ -261,13 +265,15 @@ Compromise analysis:
 |---|---|---|
 | `REBALANCER_ROLE` | Mispriced redemptions; value leaks gradually | 0.5%/epoch, 22h interval |
 | `OPERATOR_ROLE` | Assets sent to whitelisted destinations | The whitelist |
-| `ADMIN_ROLE` | Whitelist any address, then `emergencyRecover`; 100% fee | Nothing |
-| `DEFAULT_ADMIN_ROLE` | Total; can grant itself every other role or upgrade | Nothing |
+| `GUARDIAN_ROLE` | Vault paused, whitelist emptied — denial of service | `ADMIN_ROLE` can undo, after 48h |
+| `ADMIN_ROLE` | Whitelist any address, then `emergencyRecover`; 100% fee | 48h public delay; Safe must propose |
+| `DEFAULT_ADMIN_ROLE` | Total; can grant itself every other role or upgrade | 48h public delay; Safe must propose |
 
 Known weaknesses in the current separation:
 
-1. **No timelock anywhere.** Whitelisting and withdrawal can occur in the same block;
-   upgrades and role rotations take effect immediately.
+1. **The timelock delays, it does not prevent.** One Safe is proposer, executor, canceller
+   and guardian. It can pause instantly while unpausing takes 48 hours, so a pause can
+   remove depositors' exit window during a pending change.
 2. **`ADMIN_ROLE` mixes risk parameters with custody powers.** `setFee` and
    `emergencyRecover` sit behind the same role, so delegating parameter management is
    impossible without delegating fund extraction. This is the gap a `CURATOR_ROLE` would
@@ -280,13 +286,13 @@ Known weaknesses in the current separation:
 
 ---
 
-## Post-timelock model (pending)
+## Timelock model
 
-Implemented in `src/`, **not deployed**. Everything above describes live state today.
+**Live.** The handover batch has executed.
 
-### What changes
+### What changed
 
-`DEFAULT_ADMIN_ROLE` and `ADMIN_ROLE` move from the Safe to an OpenZeppelin
+`DEFAULT_ADMIN_ROLE` and `ADMIN_ROLE` moved from the Safe to an OpenZeppelin
 `TimelockController` with a 48-hour `minDelay`, deployed with `admin == address(0)` so no
 standing bypass exists. There is **no code coupling** — no contract imports or stores the
 timelock address. The vault sees a call from an address holding `ADMIN_ROLE` and has no
@@ -321,7 +327,7 @@ only `astId` values differ, which are AST node ids, not storage positions).
 
 `Yield` is unchanged — it has no emergency surface.
 
-### Roles after the handover
+### Roles now
 
 | Role | Holder | Delay |
 |---|---|---|
@@ -336,6 +342,8 @@ The operational roles are deliberately untouched. A 48-hour delay on `execute` o
 `script/TimelockRoleChange.s.sol` asserts at runtime that its batch never touches either.
 
 ### Deployment
+
+How the live handover was done, and how to repeat it on a new chain:
 
 1. Deploy guardian-aware `TownSqToken` and `Manager` implementations.
 2. `forge script script/DeployTimelock.s.sol --broadcast`
@@ -357,7 +365,8 @@ Safe, and asserts live storage survives — fee, cooldown, vesting, `virtualAsse
 
 ### Which weaknesses this closes
 
-Of the four listed above: (1) no timelock is resolved for governance actions; (2)
+Of the four weaknesses in the pre-timelock design: "no timelock anywhere" is resolved for
+governance actions (what remains is the pause caveat now listed as (1)); (2)
 `ADMIN_ROLE` mixing risk parameters with custody powers is *mitigated*, not fixed — both
 now carry a 48h delay, but they remain the same role, so a `CURATOR_ROLE` split is still
 the cleaner answer; (3) and (4) are unaffected.
@@ -380,8 +389,10 @@ X Layer (chain 196), per `script/SafeRoleChange.s.sol`:
 cast call <proxy> "hasRole(bytes32,address)(bool)" \
   $(cast keccak "ADMIN_ROLE") <address> --rpc-url $RPC_URL
 
-cast call <proxy> "getRoleMemberCount(bytes32)(uint256)" \
-  $(cast keccak "OPERATOR_ROLE") --rpc-url $RPC_URL
+# No getRoleMemberCount — the contracts use plain AccessControl, not the Enumerable
+# variant. List holders from the grant history, then confirm each with hasRole.
+cast logs --address <proxy> --from-block <deploy> \
+  "RoleGranted(bytes32,address,address)" $(cast keccak "OPERATOR_ROLE") --rpc-url $RPC_URL
 
 # Whitelist — authoritative history is the event stream
 cast logs --address 0xF14d5567f85c73FD309738374D5a69EB17b8387c \

@@ -122,8 +122,12 @@ cast logs --address $MANAGER "BatchExecuted(address,address[],bytes[])" --rpc-ur
 | `RoleGranted` / `RoleRevoked` | all three | Privileged access changed hands |
 
 {% hint style="warning" %}
-`Upgraded`, `RoleGranted`, and `WhitelistUpdated` take effect immediately — there is no
-timelock, so watching them is reactive, not preventative.
+`Upgraded`, `RoleGranted`, and `WhitelistUpdated` are the moment a change takes effect. Every
+upgrade, role grant and whitelist addition is first scheduled on the 48-hour timelock, so
+watch `CallScheduled` on the timelock too — it fires 48 hours earlier, which makes
+monitoring them is preventative, not just reactive. `WhitelistUpdated` with `status = false`
+is the exception: the guardian can remove entries instantly. See
+[Governance and the timelock](../operations/governance.md).
 {% endhint %}
 
 ## Monitoring gaps

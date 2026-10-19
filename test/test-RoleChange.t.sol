@@ -33,7 +33,7 @@ contract RoleChange is Test {
     Yield public yield;
 
     // ============ live robinhood(chain 4663) addresses ============
-   address constant VAULT_PROXY = 0x5B8dC679EDAE1Ad507c433EF55d5B4bA620F1919;
+    address constant VAULT_PROXY = 0x5B8dC679EDAE1Ad507c433EF55d5B4bA620F1919;
     address constant YIELD_PROXY = 0xa437BD29AB51BF43C686FE1561B97cF9DeBFB524;
     address constant MANAGER_PROXY = 0xF14d5567f85c73FD309738374D5a69EB17b8387c;
 

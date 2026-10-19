@@ -47,14 +47,17 @@ interact with are the proxies, and they do not change when the implementation is
 | **You** | Deposit, request redemption, collect your own redemption | Anything else |
 | **Operator** | Deploy capital to whitelisted addresses, fund the vault, settle a user's request | Change the allowlist, report yield, change parameters |
 | **Rebalancer** | Report each epoch's profit or loss | Move any asset |
-| **Admin** | Set the allowlist, fees, cooldown, caps; pause; emergency-recover assets | — |
-| **Governance (root admin)** | Upgrade all contracts, grant and revoke every role | — |
+| **Admin** (timelock, 48h) | Set the allowlist, fees, cooldown, caps; pause and unpause; emergency-recover assets | — |
+| **Guardian** | Pause the vault, remove whitelist entries — instantly | Unpause, add to the allowlist, change parameters |
+| **Governance (root admin)** (timelock, 48h) | Upgrade all contracts, grant and revoke every role | — |
 
 Full enumeration in [Roles and permissions](../reference/roles.md).
 
 {% hint style="warning" %}
 The Admin role can both whitelist a destination and extract assets from the vault, and
-there is **no timelock** on either. Deposit sizing should account for this.
+both go through a **48-hour timelock** — delayed and public, but not prevented. Deposit
+sizing should account for this. See
+[Governance and the timelock](../operations/governance.md).
 {% endhint %}
 
 ## Trust boundaries

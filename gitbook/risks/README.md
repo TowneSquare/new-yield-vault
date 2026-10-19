@@ -88,35 +88,36 @@ has stalled.
 
 ## Withdrawals can be paused
 
-An admin can pause the vault. Pause blocks `withdraw`, `redeem`, and `redeemFor` as well as
-deposits — so a pause makes matured redemptions temporarily uncollectable.
+The guardian (instantly) or the admin (through the timelock) can pause the vault. Pause
+blocks `withdraw`, `redeem`, and `redeemFor` as well as deposits — so a pause makes matured
+redemptions temporarily uncollectable. Unpausing is admin-only, so it always takes at least
+48 hours.
 
 Most vaults deliberately keep the exit path open while pausing entry. This one does not.
 The protocol documents this as an accepted risk on the basis that pause is a short-lived
 emergency measure.
 
-{% hint style="info" %}
-**A 48-hour timelock is implemented but not yet deployed.** The two sections below describe
-the live deployment as it stands today. Once the handover executes, upgrades and admin
-parameter changes will require a 48-hour public delay, with emergency pause and whitelist
-removal carved out as instant. See
-[Governance and the timelock](../operations/governance.md) for the model and for how to
-verify onchain which regime is actually in force.
-{% endhint %}
+## Upgradeability, behind a 48-hour timelock
 
-## Upgradeability, with no timelock
+All three contracts are UUPS-upgradeable. Upgrade authority (`DEFAULT_ADMIN_ROLE`) is held
+by a `TimelockController` with a 48-hour delay, so an upgrade must be scheduled publicly and
+wait 48 hours before it can execute.
 
-All three contracts are UUPS-upgradeable. The governance multisig can replace any of them
-with arbitrary code, **effective immediately**.
+That delay is your window to exit ahead of a change you disagree with. With a 1-day
+cooldown it is long enough to request and collect a redemption — **provided the vault is
+not paused** (see below). An upgrade that does execute still subsumes every other limit
+described in this documentation, including the 1% exit fee cap.
 
-There is no delay in which to exit ahead of a change you disagree with. An upgrade
-subsumes every other limit described in this documentation — including the 1% exit fee cap.
+Watch `CallScheduled` on the timelock. See
+[Governance and the timelock](../operations/governance.md).
 
 ## Broad admin powers
 
-The admin role can, with no timelock:
+`ADMIN_ROLE` is also held by the timelock, so each of these now takes 48 hours and is
+visible in advance — but each is still possible:
 
-- Whitelist any destination address, then deploy capital to it in the same block
+- Whitelist any destination address, after which the operator can deploy capital to it
+  immediately
 - Call `emergencyRecover` to transfer any token out of the vault — **including assets
   already earmarked for pending redemptions**, since the function does not check
   `totalRequestedAmount`
@@ -124,7 +125,18 @@ The admin role can, with no timelock:
 - Set the minimum reporting interval as low as 1 second, effectively removing the rate limit
 - Repoint the Manager address, changing which contract controls vault accounting
 - Change the treasury, redirecting all fee accrual
-- Pause the vault
+- Unpause the vault
+
+Two actions are deliberately **not** delayed. The Safe holds `GUARDIAN_ROLE`, which can
+`pause()` the vault and remove whitelist entries instantly. It cannot unpause, add to the
+whitelist, or change anything else.
+
+{% hint style="warning" %}
+**Pause fast, resume slow.** The guardian can pause instantly, but lifting a pause takes a
+48-hour timelock proposal — and a pause blocks withdrawals. A pause placed while a
+governance change is pending would stop depositors from using the 48-hour window to exit.
+The guardian and the timelock's proposer are the same Safe.
+{% endhint %}
 
 {% hint style="warning" %}
 The same role sets the whitelist **and** can extract assets. That means the whitelist is not
@@ -160,8 +172,8 @@ did not consent to.
 | Offchain counterparty default | **High** | Whitelist, offchain agreement only |
 | Withdrawal not funded | **High** | Operator diligence; nothing onchain |
 | False yield reporting | **Medium** | Per-epoch caps, rate limit |
-| Admin extraction / fee change | **Medium** | Multisig; no timelock |
-| Immediate upgrade | **Medium** | Multisig; no timelock |
+| Admin extraction / fee change | **Medium** | Multisig; 48h timelock |
+| Malicious upgrade | **Medium** | Multisig; 48h timelock |
 | Pause blocking exit | **Low–Medium** | Intended to be short-lived |
 
 {% hint style="info" %}

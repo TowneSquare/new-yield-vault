@@ -1,14 +1,14 @@
 ---
-description: How governance works once DEFAULT_ADMIN and ADMIN sit behind a 48-hour TimelockController.
+description: How governance works now that DEFAULT_ADMIN and ADMIN sit behind a 48-hour TimelockController.
 ---
 
 # Governance and the timelock
 
-{% hint style="warning" %}
-**Status: implemented, not yet deployed.** The contracts, deployment scripts and tests
-exist in the repository, but the live deployment still has the admin multisig holding
-`DEFAULT_ADMIN_ROLE` and `ADMIN_ROLE` directly, with no delay. Verify onchain before
-relying on anything on this page — see [Verifying it is live](#verifying-it-is-live).
+{% hint style="success" %}
+**Status: live.** `DEFAULT_ADMIN_ROLE` and `ADMIN_ROLE` on the vault, Manager and Yield are
+held by the `TimelockController`. The Safe proposes, executes and cancels, and holds
+`GUARDIAN_ROLE` on the vault and Manager. Do not take this page's word for it — see
+[Verifying it is live](#verifying-it-is-live).
 {% endhint %}
 
 ## The model
@@ -188,6 +188,13 @@ cast logs --address <timelock> "CallScheduled(bytes32,uint256,address,uint256,by
 With a 1-day cooldown, 48 hours is enough for a depositor who sees a proposal they dislike
 to request and complete a full exit before it lands. That is the whole point of the delay.
 
+{% hint style="warning" %}
+**One caveat: pause.** The guardian can pause instantly, pause blocks withdrawals, and
+unpausing goes through the 48-hour timelock. So a pause during a pending change removes the
+exit window. The guardian and the proposer are the same Safe, which is why a `Paused` event
+while a `CallScheduled` is outstanding deserves attention.
+{% endhint %}
+
 {% hint style="info" %}
 The delay does **not** cover everything. `execute` (capital deployment) and
 `distributeYield` (P&L reporting) remain instant, because delaying them would break normal
@@ -196,14 +203,16 @@ operation. See [Deploying capital](deploying-capital.md) and [Reporting P&L](rep
 
 ## Deploying the timelock
 
-Four steps, in order:
+This is how the live handover was done, and how to repeat it on a new chain. Four steps, in
+order:
 
 {% stepper %}
 {% step %}
 ### Deploy the guardian-aware implementations
 
 New `TownSqToken` and `Manager` implementations. `Yield` is unchanged — it has no emergency
-surface.
+surface. `script/UpgradeVault.s.sol` deploys both (`deployImplementationsGuardian()`); the
+upgrade itself is transactions 1–2 of the handover batch below.
 {% endstep %}
 
 {% step %}

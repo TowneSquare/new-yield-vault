@@ -1,12 +1,9 @@
 # Parameters
 
 {% hint style="warning" %}
-Every parameter here is governance-adjustable with **no timelock** on the current live
-deployment. Read the live value before you rely on it — the defaults below are deploy-time
-values, not current state.
-
-A 48-hour timelock is implemented and pending deployment; once live, every change on this
-page requires a 48-hour public delay. See
+Every parameter here is governance-adjustable, behind a **48-hour timelock**: a change is
+scheduled publicly and can only execute 48 hours later. Read the live value before you rely
+on it — the defaults below are deploy-time values, not current state. See
 [Governance and the timelock](../operations/governance.md).
 {% endhint %}
 
